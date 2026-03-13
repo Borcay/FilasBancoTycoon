@@ -4,7 +4,7 @@ public class Main {
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
             SimulacionBanco simulacion = new SimulacionBanco();
-            InterfazGrafica gui = new InterfazGrafica(simulacion);
+            InterfazGrafica gui = new InterfazGrafica(simulacion, simulacion.getSonido());
             simulacion.setGui(gui);
             gui.setVisible(true);
             simulacion.iniciar();

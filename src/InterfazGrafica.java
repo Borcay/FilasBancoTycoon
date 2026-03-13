@@ -26,16 +26,23 @@ public class InterfazGrafica extends JFrame {
     private SimulacionBanco simulacion;
     private PanelSimulacion panel;
     private javax.swing.Timer animTimer;
+    private SonidoManager sonido;
+    private JLabel lblCancion;
+    private JButton btnPausa;
+    private JSlider sliderVolumen;
 
     // Posición actual animada por cliente: id -> {x, y}
     // Cuando un cliente aparece por primera vez, su x inicial está desplazada a la derecha
     private ConcurrentHashMap<Integer, double[]> posiciones = new ConcurrentHashMap<>();
 
-    public InterfazGrafica(SimulacionBanco simulacion) {
+    public InterfazGrafica(SimulacionBanco simulacion, SonidoManager sonido) {
         this.simulacion = simulacion;
+        this.sonido = sonido;
         configurarVentana();
         crearPanel();
+        crearReproductor();
         iniciarAnimaciones();
+        sonido.setOnCancionCambia(() -> SwingUtilities.invokeLater(this::actualizarReproductor));
     }
 
     private void configurarVentana() {
@@ -45,6 +52,109 @@ public class InterfazGrafica extends JFrame {
         setBackground(COLOR_FONDO);
         setSize(1100, HEADER_ALTO + CARRIL_ALTO * 4 + 60);
         setLocationRelativeTo(null);
+    }
+
+    private void crearReproductor() {
+        // Panel flotante esquina inferior derecha
+        JPanel reproductor = new JPanel();
+        reproductor.setLayout(new BoxLayout(reproductor, BoxLayout.Y_AXIS));
+        reproductor.setBackground(new Color(30, 40, 70, 220));
+        reproductor.setBorder(BorderFactory.createCompoundBorder(
+            BorderFactory.createLineBorder(new Color(100, 140, 220), 1),
+            BorderFactory.createEmptyBorder(8, 12, 8, 12)
+        ));
+
+        // Etiqueta "♪ Now Playing"
+        JLabel lblTitulo = new JLabel(">> Now Playing");
+        lblTitulo.setFont(new Font("Segoe UI", Font.BOLD, 10));
+        lblTitulo.setForeground(new Color(140, 180, 255));
+        lblTitulo.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        // Nombre de la canción
+        lblCancion = new JLabel("...");
+        lblCancion.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        lblCancion.setForeground(Color.WHITE);
+        lblCancion.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        // Botones
+        JPanel panelBotones = new JPanel(new FlowLayout(FlowLayout.CENTER, 6, 0));
+        panelBotones.setOpaque(false);
+
+        btnPausa = new JButton("|| Pausa");
+        btnPausa.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        btnPausa.setForeground(Color.WHITE);
+        btnPausa.setBackground(new Color(60, 80, 140));
+        btnPausa.setBorderPainted(false);
+        btnPausa.setFocusPainted(false);
+        btnPausa.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btnPausa.addActionListener(e -> {
+            sonido.togglePausa();
+            actualizarReproductor();
+        });
+
+        JButton btnSkip = new JButton(">> Skip");
+        btnSkip.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        btnSkip.setForeground(Color.WHITE);
+        btnSkip.setBackground(new Color(60, 80, 140));
+        btnSkip.setBorderPainted(false);
+        btnSkip.setFocusPainted(false);
+        btnSkip.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btnSkip.addActionListener(e -> sonido.siguienteCancion());
+
+        panelBotones.add(btnPausa);
+        panelBotones.add(btnSkip);
+
+        // Slider de volumen
+        sliderVolumen = new JSlider(0, 100, (int)(sonido.getVolumen() * 100));
+        sliderVolumen.setOpaque(false);
+        sliderVolumen.setForeground(new Color(140, 180, 255));
+        sliderVolumen.setMaximumSize(new Dimension(160, 20));
+        sliderVolumen.setPreferredSize(new Dimension(140, 20));
+        sliderVolumen.addChangeListener(e ->
+            sonido.setVolumen(sliderVolumen.getValue() / 100f)
+        );
+
+        JLabel lblVol = new JLabel("Vol.");
+        lblVol.setFont(new Font("Segoe UI", Font.PLAIN, 10));
+        lblVol.setForeground(new Color(180, 200, 240));
+        lblVol.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        reproductor.add(lblTitulo);
+        reproductor.add(Box.createVerticalStrut(3));
+        reproductor.add(lblCancion);
+        reproductor.add(Box.createVerticalStrut(5));
+        reproductor.add(panelBotones);
+        reproductor.add(Box.createVerticalStrut(4));
+        reproductor.add(lblVol);
+        reproductor.add(sliderVolumen);
+
+        // Posicionar en esquina inferior derecha usando LayeredPane
+        getLayeredPane().add(reproductor, JLayeredPane.PALETTE_LAYER);
+
+        // Reposicionar cuando cambie el tamaño
+        addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override
+            public void componentResized(java.awt.event.ComponentEvent e) {
+                Dimension size = reproductor.getPreferredSize();
+                reproductor.setBounds(
+                    getWidth() - size.width - 20,
+                    getHeight() - size.height - 40,
+                    size.width, size.height
+                );
+            }
+        });
+
+        // Posición inicial
+        reproductor.setBounds(getWidth() - 200, getHeight() - 160, 180, 140);
+
+        // Forzar texto inicial por si la canción ya empezó
+        actualizarReproductor();
+    }
+
+    private void actualizarReproductor() {
+        if (lblCancion == null) return;
+        lblCancion.setText(sonido.getNombreCancionActual());
+        btnPausa.setText(sonido.isPausado() ? "> Play" : "|| Pausa");
     }
 
     private void crearPanel() {
@@ -188,7 +298,7 @@ public class InterfazGrafica extends JFrame {
             // Contador
             g2.setColor(Color.WHITE);
             g2.setFont(new Font("Segoe UI", Font.BOLD, 20));
-            String atendidos = "✔ Clientes Atendidos: " + simulacion.getClientesAtendidos() + " / " + simulacion.getMetaClientes();
+            String atendidos = "Clientes Atendidos: " + simulacion.getClientesAtendidos() + " / " + simulacion.getMetaClientes();
             g2.drawString(atendidos, 30, 30);
 
             // Barra de progreso
@@ -203,18 +313,18 @@ public class InterfazGrafica extends JFrame {
             long elapsed = (System.currentTimeMillis() - simulacion.getTiempoInicio()) / 1000;
             g2.setColor(Color.WHITE);
             g2.setFont(new Font("Segoe UI", Font.PLAIN, 16));
-            String tiempo = "⏱  " + formatTiempo(elapsed);
+            String tiempo = "Tiempo: " + formatTiempo(elapsed);
             FontMetrics fm = g2.getFontMetrics();
             g2.drawString(tiempo, getWidth() - fm.stringWidth(tiempo) - 30, 30);
 
             // Leyenda
             g2.setFont(new Font("Segoe UI", Font.PLAIN, 12));
             g2.setColor(new Color(255, 255, 255, 200));
-            g2.drawString("● Abierto", getWidth() - 230, 55);
+            g2.drawString("[ ] Abierto", getWidth() - 230, 55);
             g2.setColor(new Color(255, 120, 120, 220));
-            g2.drawString("● Cerrado", getWidth() - 155, 55);
+            g2.drawString("[ ] Cerrado", getWidth() - 155, 55);
             g2.setColor(new Color(140, 255, 180, 220));
-            g2.drawString("★ Rápido", getWidth() - 75, 55);
+            g2.drawString("[*] Rapido", getWidth() - 75, 55);
         }
 
         private void dibujarCajeros(Graphics2D g2) {
@@ -265,7 +375,7 @@ public class InterfazGrafica extends JFrame {
 
             // Estado
             g2.setFont(new Font("Segoe UI", Font.PLAIN, 10));
-            String estado = cajero.isAbierto() ? (cajero.isRapido() ? "★ RÁPIDO" : "ABIERTO") : "CERRADO";
+            String estado = cajero.isAbierto() ? (cajero.isRapido() ? "RAPIDO" : "ABIERTO") : "CERRADO";
             g2.setColor(cajero.isAbierto() ? new Color(60, 100, 180, 180) : new Color(255, 255, 255, 200));
             fm = g2.getFontMetrics();
             g2.drawString(estado, x + (CAJERO_CUADRO - fm.stringWidth(estado)) / 2, y + h / 2 + 17);

@@ -13,11 +13,13 @@ public class SimulacionBanco {
     private volatile boolean terminado;
     private long tiempoInicio;
     private InterfazGrafica gui;
+    private SonidoManager sonido;
 
     public SimulacionBanco() {
         this.cajeros = new ArrayList<>();
         this.clientesAtendidos = new AtomicInteger(0);
         this.terminado = false;
+        this.sonido = new SonidoManager();
         inicializarCajeros();
     }
 
@@ -38,6 +40,7 @@ public class SimulacionBanco {
 
     public void iniciar() {
         tiempoInicio = System.currentTimeMillis();
+        sonido.iniciarMusicaFondo();
         for (Cajero c : cajeros) c.iniciar();
         iniciarGeneradorClientes();
         iniciarBalanceador();
@@ -126,6 +129,7 @@ public class SimulacionBanco {
         System.out.println("[ATENDIDO] " + cliente.getNombre() + " por " + cajero.getNombre()
                 + " | Total: " + total + "/" + META_CLIENTES);
 
+        sonido.sonarClienteAtendido();
         if (gui != null) gui.repaint();
 
         if (total >= META_CLIENTES) {
@@ -171,6 +175,7 @@ public class SimulacionBanco {
         terminado = true;
         for (Cajero c : cajeros) c.detener();
         System.out.println("[FIN] Simulación terminada. 50 clientes atendidos.");
+        sonido.sonarFin();
         if (gui != null) gui.mostrarFin();
     }
 
@@ -179,4 +184,5 @@ public class SimulacionBanco {
     public int getMetaClientes() { return META_CLIENTES; }
     public boolean isTerminado() { return terminado; }
     public long getTiempoInicio() { return tiempoInicio; }
+    public SonidoManager getSonido() { return sonido; }
 }
