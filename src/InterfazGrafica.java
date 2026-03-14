@@ -41,7 +41,7 @@ public class InterfazGrafica extends JFrame {
     private static final int CARRIL_ALTO = 82;
     private static final int HEADER_ALTO = 70;
     private static final int DAYBAR_ALTO = 32;
-    private static final int BOT_ALTO    = 185;
+    private static final int BOT_ALTO    = 240;
     private static final int CAJERO_W   = 90;
     private static final int CAJERO_H   = 56;
     private static final int CLI_W      = 72;
@@ -63,11 +63,13 @@ public class InterfazGrafica extends JFrame {
 
     // ── Popups de monedas: [x, y, alpha, valor, vip] ──
     private final CopyOnWriteArrayList<double[]> coinPopups = new CopyOnWriteArrayList<>();
+    private final CopyOnWriteArrayList<Object[]> toasts     = new CopyOnWriteArrayList<>();
 
     // ── Overlay de cambio de día ──
     private volatile boolean mostrandoOverlayDia = false;
     private volatile String  textOverlay1 = "";
     private volatile String  textOverlay2 = "";
+    private volatile String  textOverlay3 = "";  // reporte ladrones
     private volatile float   alphaOverlay = 0f;
     private volatile boolean overlaySubiendo = true;
 
@@ -81,7 +83,7 @@ public class InterfazGrafica extends JFrame {
     private JLabel lblMonedasHeader;    // "$1234" (grande, dorado)
 
     // ── Stats panel ──
-    private JLabel lblGanHoy, lblMejorDia, lblNumCajeros, lblVelocidad;
+    private JLabel lblGanHoy, lblMejorDia, lblNumCajeros, lblVelocidad, lblTiempoJuego;
 
     // ── Mejoras ──
     private JPanel[] panelesMejora;
@@ -280,7 +282,7 @@ public class InterfazGrafica extends JFrame {
         bot.setBorder(BorderFactory.createMatteBorder(2, 0, 0, 0, C_BOT_BORDER));
 
         JPanel stats = crearPanelStats();
-        stats.setPreferredSize(new Dimension(152, BOT_ALTO));
+        stats.setPreferredSize(new Dimension(175, BOT_ALTO));
         bot.add(stats, BorderLayout.WEST);
 
         bot.add(crearPanelMejoras(), BorderLayout.CENTER);
@@ -298,19 +300,20 @@ public class InterfazGrafica extends JFrame {
         p.setBackground(C_BOT_BG);
         p.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createMatteBorder(0,0,0,1,C_BOT_BORDER),
-            new EmptyBorder(10,12,10,12)));
+            new EmptyBorder(8,10,8,10)));
 
-        JLabel tit = new JLabel("ESTADISTICAS");
+        JLabel tit = new JLabel("ESTADÍSTICAS");
         tit.setFont(new Font("Segoe UI", Font.BOLD, 9));
         tit.setForeground(new Color(112,144,192));
         tit.setAlignmentX(Component.LEFT_ALIGNMENT);
         tit.setBorder(new EmptyBorder(0,0,5,0));
         p.add(tit);
 
-        lblGanHoy    = mkStatBox(p, "Ganancias hoy",   "$0",   C_GOLD);
-        lblMejorDia  = mkStatBox(p, "Mejor dia",       "$0",   new Color(48,96,192));
-        lblNumCajeros= mkStatBox(p, "Cajeros activos", "1",    C_GREEN_UPG);
-        lblVelocidad = mkStatBox(p, "Tiempo/cliente",  "4.0s", new Color(180,40,40));
+        lblGanHoy      = mkStatBox(p, "Ganancias hoy",  "$0",    C_GOLD);
+        lblMejorDia    = mkStatBox(p, "Mejor dia",      "$0",    new Color(48,96,192));
+        lblNumCajeros  = mkStatBox(p, "Cajeros activos","1",     C_GREEN_UPG);
+        lblVelocidad   = mkStatBox(p, "Tiempo/cliente", "4.0s",  new Color(180,40,40));
+        lblTiempoJuego = mkStatBox(p, "Tiempo total",   "00:00", new Color(80,80,160));
         return p;
     }
 
@@ -320,21 +323,21 @@ public class InterfazGrafica extends JFrame {
         box.setBackground(Color.WHITE);
         box.setBorder(BorderFactory.createCompoundBorder(
             BorderFactory.createLineBorder(C_BOT_BORDER, 1),
-            new EmptyBorder(4,8,4,8)));
+            new EmptyBorder(3,7,3,7)));
         box.setAlignmentX(Component.LEFT_ALIGNMENT);
-        box.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
+        box.setMaximumSize(new Dimension(Integer.MAX_VALUE, 36));
 
         JLabel lbl = new JLabel(label.toUpperCase());
-        lbl.setFont(new Font("Segoe UI", Font.PLAIN, 9));
+        lbl.setFont(new Font("Segoe UI", Font.PLAIN, 8));
         lbl.setForeground(new Color(112,144,192));
 
         JLabel v = new JLabel(val);
-        v.setFont(new Font("Segoe UI", Font.BOLD, 16));
+        v.setFont(new Font("Segoe UI", Font.BOLD, 13));
         v.setForeground(color);
 
         box.add(lbl); box.add(v);
         parent.add(box);
-        parent.add(Box.createVerticalStrut(4));
+        parent.add(Box.createVerticalStrut(3));
         return v;
     }
 
@@ -501,6 +504,10 @@ public class InterfazGrafica extends JFrame {
         if (ok) {
             sim.sincronizarCajeros();
             SwingUtilities.invokeLater(this::actualizarPanelInferior);
+            // Mensaje especial al alcanzar capacidad máxima de cajeros
+            if (idx == 0 && eco.getNivelCajeros() >= Economia.MAX_CAJEROS) {
+                mostrarToast("🎉 ¡Felicitaciones! Alcanzaste la capacidad máxima de cajeros.", new Color(26,154,80));
+            }
         }
     }
 
@@ -626,6 +633,7 @@ public class InterfazGrafica extends JFrame {
             actualizarPosicionesClientes();
             actualizarOverlay();
             actualizarCoinPopups();
+            actualizarToasts();
             actualizarHUD();
             // Refrescar colores de mejoras cada tick (refleja cambios de monedas)
             if (panelesMejora != null)
@@ -642,11 +650,13 @@ public class InterfazGrafica extends JFrame {
         lblContadorClientes.setText("Clientes Atendidos: " +
             sim.getClientesAtendidosTotal() + " / " + sim.getMetaClientes());
         long seg = (System.currentTimeMillis() - eco.getInicioJuego()) / 1000;
-        lblTimerHeader.setText("Tiempo: " + fmt(seg/60) + ":" + fmt(seg%60));
+        String tiempoStr = fmt(seg/60) + ":" + fmt(seg%60);
+        lblTimerHeader.setText("Tiempo: " + tiempoStr);
         lblGanHoy.setText("$" + eco.getGananciasHoy());
         lblMejorDia.setText("$" + eco.getMejorDia());
         lblNumCajeros.setText(String.valueOf(sim.getCajeros().size()));
         lblVelocidad.setText(String.format("%.1fs", eco.getServeBaseMs()/1000.0));
+        if (lblTiempoJuego != null) lblTiempoJuego.setText(tiempoStr);
     }
 
     private void actualizarPosicionesClientes() {
@@ -716,6 +726,15 @@ public class InterfazGrafica extends JFrame {
         coinPopups.removeIf(p -> p[2] <= 0);
     }
 
+    private void actualizarToasts() {
+        toasts.forEach(t -> {
+            float a = (Float)t[1];
+            a -= 0.012f;
+            t[1] = Math.max(0f, a);
+        });
+        toasts.removeIf(t -> (Float)t[1] <= 0f);
+    }
+
     // ── Llamado desde SimulacionBanco cuando se atiende un cliente ──
     public void mostrarCoinPopup(int x, int y, int monto, boolean vip) {
         // [x, y, alpha, monto, vip(0/1)]
@@ -723,9 +742,17 @@ public class InterfazGrafica extends JFrame {
     }
 
     // ── Overlay de cambio de día ──
-    public void mostrarCambioDia(int diaAnterior, int diaNuevo, long ganancias) {
-        textOverlay1 = "Fin del Dia " + diaAnterior + "  —  $" + ganancias + " ganados";
-        textOverlay2 = "Inicio del Dia " + diaNuevo;
+    public void mostrarCambioDia(int diaAnterior, int diaNuevo, long ganancias,
+                                 long robado, int atrapados, int robaron) {
+        textOverlay1 = "Fin del Día " + diaAnterior + "  —  $" + ganancias + " ganados";
+        textOverlay2 = "Día " + diaNuevo + " comenzando...";
+        // Reporte ladrones
+        if (robado > 0 || atrapados > 0 || robaron > 0) {
+            textOverlay3 = "Ladrones: " + atrapados + " atrapados  |  "
+                         + robaron + " escaparon  |  $" + robado + " robados";
+        } else {
+            textOverlay3 = "Sin incidentes de seguridad hoy ✓";
+        }
         alphaOverlay    = 0f;
         overlaySubiendo = true;
         mostrandoOverlayDia = true;
@@ -733,14 +760,43 @@ public class InterfazGrafica extends JFrame {
 
     public void onCajeroAgregado(Cajero c) {
         SwingUtilities.invokeLater(() -> {
-            int h = HEADER_ALTO + DAYBAR_ALTO + sim.getCajeros().size() * CARRIL_ALTO + BOT_ALTO + 38;
-            setSize(getWidth(), Math.min(h, Toolkit.getDefaultToolkit().getScreenSize().height - 60));
+            // Solo revalidar el panel sin modificar el tamaño de la ventana
             panelBanco.revalidate();
+            panelBanco.repaint();
         });
     }
 
     public void onNuevoDia() {
         SwingUtilities.invokeLater(this::actualizarPanelInferior);
+    }
+
+    public void mostrarToast(String mensaje, Color color) {
+        toasts.add(new Object[]{ mensaje, 1.0f, color, 0.0f });
+    }
+
+    public void mostrarBonusMeta(long bonus) {
+        mostrarToast("\u00a1Superaste la meta del dia! +" + bonus + " monedas bonus", new Color(26,154,80));
+    }
+
+    public void mostrarAvisoLadron() {
+        JOptionPane.showMessageDialog(this,
+            "<html><b>\u26a0\ufe0f \u00a1Alerta de seguridad!</b><br><br>" +
+            "Un <b>ladron</b> se ha colado entre los clientes.<br>" +
+            "Puedes reconocerlo porque su nombre aparece en <b>rojo oscuro</b>.<br><br>" +
+            "Si llega a ser atendido por un cajero, <b>te robara $50</b>.<br>" +
+            "Para eliminarlo: <b>haz clic sobre el</b> y el guardia lo sacara.<br><br>" +
+            "<i>\u00a1Mantente atento! Seguiran apareciendo de vez en cuando.</i></html>",
+            "\u00a1Ladron detectado!", JOptionPane.WARNING_MESSAGE);
+    }
+
+    public void mostrarRoboLadron(int x, int y, long monto) {
+        // vip=2 → rojo (robo)
+        coinPopups.add(new double[]{ x, y, 1.4, -monto, 2 });
+    }
+
+    public void mostrarRecompensaLadron(int x, int y, long monto) {
+        // vip=3 → azul/verde brillante (recompensa por atrapar)
+        coinPopups.add(new double[]{ x, y, 1.4, monto, 3 });
     }
 
     // ── Llamado desde clienteAtendido para marcar fade ──
@@ -766,7 +822,14 @@ public class InterfazGrafica extends JFrame {
     //  PANEL BANCO
     // ══════════════════════════════════════════════════
     class PanelBanco extends JPanel {
-        PanelBanco() { setBackground(C_FONDO); }
+        PanelBanco() {
+            setBackground(C_FONDO);
+            addMouseListener(new MouseAdapter() {
+                @Override public void mouseClicked(MouseEvent e) {
+                    sim.intentarAtraparLadron(e.getX(), e.getY());
+                }
+            });
+        }
 
         @Override public Dimension getPreferredSize() {
             return new Dimension(0, Math.max(sim.getCajeros().size() * CARRIL_ALTO, 10));
@@ -790,42 +853,91 @@ public class InterfazGrafica extends JFrame {
                 g2.setComposite(AlphaComposite.SrcOver);
             });
 
-            // Coin popups
+            // Coin popups (p[4]: 0=normal, 1=VIP, 2=robo)
             coinPopups.forEach(p -> {
                 if (p[2] <= 0) return;
                 g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, (float)Math.min(1, p[2])));
-                String txt = "+" + (int)p[3] + (p[4]>0 ? " VIP" : "");
-                g2.setFont(new Font("Segoe UI", Font.BOLD, 13));
+                boolean robo  = (p[4] == 2);
+                boolean vip   = (p[4] == 1);
+                boolean recom = (p[4] == 3);
+                String txt = robo  ? "-" + (int)Math.abs(p[3]) + " ROBADO!"
+                           : recom ? "+" + (int)p[3] + " ATRAPADO!"
+                           : "+"   + (int)p[3] + (vip ? " VIP" : "");
+                g2.setFont(new Font("Segoe UI", Font.BOLD, (robo||recom) ? 15 : 13));
                 FontMetrics fm = g2.getFontMetrics();
                 int tx = (int)p[0] - fm.stringWidth(txt)/2;
                 int ty = (int)p[1];
-                // Sombra del texto
-                g2.setColor(new Color(0,0,0,60));
+                // Sombra
+                g2.setColor(new Color(0,0,0,80));
                 g2.drawString(txt, tx+1, ty+1);
-                // Texto
-                g2.setColor(p[4]>0 ? new Color(180,120,0) : new Color(30,130,50));
+                // Color según tipo
+                Color textColor = robo  ? new Color(255,40,40)
+                                : recom ? new Color(40,210,120)
+                                : vip   ? new Color(210,150,0)
+                                :         new Color(30,150,60);
+                g2.setColor(textColor);
                 g2.drawString(txt, tx, ty);
                 g2.setComposite(AlphaComposite.SrcOver);
             });
 
+            // Toasts (mensajes flotantes)
+            int toastY = 60;
+            for (Object[] t : toasts) {
+                float alpha = (Float)t[1];
+                if (alpha <= 0) continue;
+                String msg = (String)t[0];
+                Color  col = (Color)t[2];
+                g2.setFont(new Font("Segoe UI", Font.BOLD, 14));
+                FontMetrics fm = g2.getFontMetrics();
+                int tw = fm.stringWidth(msg) + 24;
+                int th = 34;
+                int tx2 = (getWidth() - tw) / 2;
+                int ty2 = toastY;
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alpha * 0.88f));
+                g2.setColor(new Color(20,20,40));
+                g2.fillRoundRect(tx2, ty2, tw, th, 12, 12);
+                g2.setColor(col);
+                g2.setStroke(new BasicStroke(2f));
+                g2.drawRoundRect(tx2, ty2, tw, th, 12, 12);
+                g2.setStroke(new BasicStroke(1f));
+                g2.setColor(Color.WHITE);
+                g2.drawString(msg, tx2+12, ty2 + th/2 + fm.getAscent()/2 - 2);
+                g2.setComposite(AlphaComposite.SrcOver);
+                toastY += th + 6;
+            }
+
             // Overlay cambio de dia
             if (mostrandoOverlayDia && alphaOverlay > 0) {
-                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alphaOverlay * 0.72f));
-                g2.setColor(new Color(20, 40, 100));
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alphaOverlay * 0.78f));
+                g2.setColor(new Color(10, 20, 60));
                 g2.fillRect(0, 0, getWidth(), getHeight());
                 g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, alphaOverlay));
 
-                g2.setFont(new Font("Segoe UI", Font.BOLD, 28));
+                int cy = getHeight() / 2;
+
+                // Línea 1: ganancias del día
+                g2.setFont(new Font("Segoe UI", Font.BOLD, 26));
                 FontMetrics fm = g2.getFontMetrics();
                 String t1 = textOverlay1;
                 g2.setColor(new Color(255,230,80));
-                g2.drawString(t1, (getWidth()-fm.stringWidth(t1))/2, getHeight()/2 - 14);
+                g2.drawString(t1, (getWidth()-fm.stringWidth(t1))/2, cy - 30);
 
-                g2.setFont(new Font("Segoe UI", Font.BOLD, 20));
+                // Línea 2: reporte ladrones
+                String t3 = textOverlay3;
+                if (t3 != null && !t3.isEmpty()) {
+                    g2.setFont(new Font("Segoe UI", Font.PLAIN, 14));
+                    fm = g2.getFontMetrics();
+                    boolean haRobado = t3.contains("$") && !t3.contains("$0");
+                    g2.setColor(haRobado ? new Color(255,120,120) : new Color(100,240,160));
+                    g2.drawString(t3, (getWidth()-fm.stringWidth(t3))/2, cy + 6);
+                }
+
+                // Línea 3: inicio nuevo día
+                g2.setFont(new Font("Segoe UI", Font.BOLD, 18));
                 fm = g2.getFontMetrics();
                 String t2 = textOverlay2;
-                g2.setColor(Color.WHITE);
-                g2.drawString(t2, (getWidth()-fm.stringWidth(t2))/2, getHeight()/2 + 20);
+                g2.setColor(new Color(180,210,255));
+                g2.drawString(t2, (getWidth()-fm.stringWidth(t2))/2, cy + 36);
 
                 g2.setComposite(AlphaComposite.SrcOver);
             }
@@ -846,14 +958,63 @@ public class InterfazGrafica extends JFrame {
 
             dibujarCajeroBox(g2, caj, PAD, y + (CARRIL_ALTO - CAJERO_H)/2);
 
-            // Solo dibujar clientes cuya posición ya fue calculada (evita parpadeo)
             Cliente enAt = caj.getClienteEnAtencion();
-            if (enAt != null && !enAt.isDesapareciendo() && posiciones.containsKey(enAt.getId()))
-                dibujarCuadroCliente(g2, enAt.getNombre(), (int)enAt.getX(), (int)enAt.getY(), true, enAt.isVip());
+            if (enAt != null && !enAt.isDesapareciendo() && posiciones.containsKey(enAt.getId())) {
+                if (enAt instanceof Ladron l) dibujarCuadroLadron(g2, l, (int)enAt.getX(), (int)enAt.getY(), true);
+                else dibujarCuadroCliente(g2, enAt.getNombre(), (int)enAt.getX(), (int)enAt.getY(), true, enAt.isVip());
+            }
 
             for (Cliente c : new ArrayList<>(caj.getCola())) {
-                if (posiciones.containsKey(c.getId()))
-                    dibujarCuadroCliente(g2, c.getNombre(), (int)c.getX(), (int)c.getY(), false, c.isVip());
+                if (!posiciones.containsKey(c.getId())) continue;
+                if (c instanceof Ladron l) dibujarCuadroLadron(g2, l, (int)c.getX(), (int)c.getY(), false);
+                else dibujarCuadroCliente(g2, c.getNombre(), (int)c.getX(), (int)c.getY(), false, c.isVip());
+            }
+        }
+
+        /** Dibuja el cuadro especial de un ladrón */
+        private void dibujarCuadroLadron(Graphics2D g2, Ladron l, int x, int y, boolean srv) {
+            // Fondo rojo oscuro pulsante
+            Color bg     = new Color(180, 30, 30);
+            Color borde  = new Color(230, 60, 60);
+
+            // Sombra
+            g2.setColor(new Color(0,0,0,30));
+            g2.fillRoundRect(x+2, y+2, CLI_W, CLI_H, 10, 10);
+
+            g2.setColor(bg);
+            g2.fillRoundRect(x, y, CLI_W, CLI_H, 10, 10);
+            g2.setColor(borde);
+            g2.setStroke(new BasicStroke(2.5f));
+            g2.drawRoundRect(x, y, CLI_W, CLI_H, 10, 10);
+            g2.setStroke(new BasicStroke(1f));
+
+            // Icono
+            g2.setFont(new Font("Segoe UI", Font.BOLD, 11));
+            g2.setColor(new Color(255,80,80));
+            FontMetrics fmv = g2.getFontMetrics();
+            String icon = "!! LADRON";
+            g2.drawString(icon, x+(CLI_W-fmv.stringWidth(icon))/2, y+13);
+
+            // Nombre
+            g2.setFont(new Font("Segoe UI", Font.BOLD, 10));
+            g2.setColor(new Color(255,200,200));
+            FontMetrics fm = g2.getFontMetrics();
+            String txt = l.getNombre();
+            g2.drawString(txt, x+(CLI_W-fm.stringWidth(txt))/2, y+CLI_H/2+fm.getAscent()/2+3);
+
+            // Animación policia encima
+            if (l.isMostrandoPolicia() && l.getAlphaPolicia() > 0) {
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, l.getAlphaPolicia()));
+                g2.setColor(new Color(30,100,220));
+                g2.fillRoundRect(x-4, y-4, CLI_W+8, CLI_H+8, 12, 12);
+                g2.setColor(Color.WHITE);
+                g2.setFont(new Font("Segoe UI", Font.BOLD, 10));
+                FontMetrics fmp = g2.getFontMetrics();
+                String ptxt = "POLICIA";
+                g2.drawString(ptxt, x+(CLI_W-fmp.stringWidth(ptxt))/2, y+CLI_H/2+4);
+                g2.setComposite(AlphaComposite.SrcOver);
+                // fade
+                l.setAlphaPolicia(l.getAlphaPolicia() - 0.04f);
             }
         }
 
@@ -959,10 +1120,13 @@ public class InterfazGrafica extends JFrame {
             g2.setColor(new Color(30,60,120));
             g2.drawString(diaStr, 18, 21);
 
-            String cl = sim.getClientesAtendidosHoy() + " / " + eco.getClientesObjetivoDia() + " hoy";
-            g2.setFont(new Font("Segoe UI", Font.PLAIN, 11));
-            g2.setColor(new Color(80,112,160));
-            g2.drawString(cl, 205, 21);
+            int atHoy  = sim.getClientesAtendidosHoy();
+            int metaHoy = eco.getClientesObjetivoDia();
+            boolean metaAlcanzada = atHoy >= metaHoy;
+            String cl = "Meta dia: " + atHoy + " / " + metaHoy + (metaAlcanzada ? " \u2713" : "");
+            g2.setFont(new Font("Segoe UI", metaAlcanzada ? Font.BOLD : Font.PLAIN, 11));
+            g2.setColor(metaAlcanzada ? new Color(26,154,80) : new Color(80,112,160));
+            g2.drawString(cl, 180, 21);
 
             long elapsed = System.currentTimeMillis() - eco.getInicioDia();
             double pct   = Math.min(1.0, (double)elapsed / sim.getDuracionDia());

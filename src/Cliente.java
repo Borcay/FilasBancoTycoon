@@ -8,7 +8,18 @@ public class Cliente {
         "Natalia", "Ricardo", "Isabella", "Fernando", "Daniela", "Tomás",
         "Lucía", "Mateo", "Elena", "Nicolás", "Martina", "Alejandro", "Sara",
         "Julián", "Gabriela", "Emilio", "Verónica", "Adrián", "Patricia",
-        "Roberto", "Claudia", "Héctor", "Mónica", "Esteban", "Rebeca"
+        "Roberto", "Claudia", "Héctor", "Mónica", "Esteban", "Rebeca",
+        "Santiago", "Valentina", "Sebastián", "Mariana", "Camilo", "Catalina",
+        "Rodrigo", "Melissa", "Felipe", "Andrea", "Iván", "Carolina", "Gustavo",
+        "Ximena", "Eduardo", "Paola", "Mauricio", "Liliana", "Oscar", "Diana",
+        "Jhon", "Leidy", "Wilson", "Yenny", "Cristian", "Nathalia", "Brayan",
+        "Tatiana", "Steven", "Lorena", "Kevin", "Manuela", "Andrés Felipe",
+        "María José", "Juan Pablo", "Laura Sofía", "Sebastián A.", "Ana María",
+        "Darío", "Esperanza", "Fabián", "Gloria", "Hernán", "Irene",
+        "Jaime", "Karen", "Leonardo", "Miriam", "Néstor", "Olga",
+        "Pilar", "Quintero", "Raúl", "Susana", "Uriel", "Viviana",
+        "Walter", "Xiomara", "Yolanda", "Zaira", "Álvaro", "Beatriz",
+        "César", "Dolores", "Ernesto", "Flor", "Gilberto", "Hilda"
     };
 
     private static final Random random = new Random();

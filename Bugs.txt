@@ -1,14 +1,23 @@
 Bug1
--En el menú de musica, el botón Play y Pausa son de diferentes tamaños
+En el menú de musica, el botón Play y Pausa son de diferentes tamaños
 
 Bug2
 Cambiar el volumen tarda 1 segundo para en realidad cambiar el volumen
-
-Bug3
-Al comprar un nuevo cajero la resolución de la pantalla cambia a un valor definido, por lo que al tenerlo en pantalla completa y comprar un cajero se hace mas pequeña y es molesto
 
 Bug4
 Poner el mouse sobre los botones de mejoras solo cambia el color durante 1 frame
 
 Bug5
-Las monedas totales al final del juego no son correctas (son muchas menos)
+Las monedas totales al final del juego no son correctas (son muchas menos, parece que un poco mas de las que tienes para gastar al acabar el juego)
+
+Bug 6
+Atrapar a un ladrón mientras esta siendo atendido por un cajero no lo elimina
+
+Bug7
+Si todos los cajeros estan cerrados, los clientes "desaparecen" pero no son eliminados, al comprar un nuevo cajero aparecen todos otra vez O ALGO ASI no estoy seguro
+
+Bug 8
+Solo la mejora de los nuevos cajeros tiene un mensaje de felicitaciones al mejorarla al maximo
+
+Bug 9
+Los nombres de las mejoras se ven grises si obtienes el dinero suficiente para mejorarla, pero se ven negros si al mejorar una mejora tienes suficiente dinero para comprar otra

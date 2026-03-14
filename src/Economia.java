@@ -23,6 +23,7 @@ public class Economia {
 
     private final AtomicLong monedas = new AtomicLong(0);
     private final AtomicLong gananciasHoy = new AtomicLong(0);
+    private final AtomicLong robadoHoy    = new AtomicLong(0);
     private volatile long mejorDia = 0;
 
     private volatile int dia = 1;
@@ -64,7 +65,13 @@ public class Economia {
         gananciasHoy.addAndGet(cantidad);
     }
 
+    public void descontarMonedas(long cantidad) {
+        monedas.updateAndGet(v -> Math.max(0, v - cantidad));
+        robadoHoy.addAndGet(cantidad);
+    }
+
     public long getGananciasHoy() { return gananciasHoy.get(); }
+    public long getRobadoHoy()    { return robadoHoy.get(); }
     public long getMejorDia()     { return mejorDia; }
 
     // ── Día ──
@@ -75,6 +82,7 @@ public class Economia {
     public void nuevoDia() {
         long ganHoy = gananciasHoy.getAndSet(0);
         if (ganHoy > mejorDia) mejorDia = ganHoy;
+        robadoHoy.set(0);
         dia++;
         inicioDia = System.currentTimeMillis();
     }
@@ -88,7 +96,21 @@ public class Economia {
         return vip ? base * 2 : base;
     }
     public double getProbVip() { return nivelVip * 0.10; }
-    public int getClientesObjetivoDia() { return 15 + dia * 4 + nivelFlujo * 3; }
+    /** Meta diaria calibrada: número alcanzable según cajeros y velocidad de atención */
+    public int getClientesObjetivoDia() {
+        int cajeros   = getMaxCajeros();
+        long durMs    = 60_000L;
+        long tiempoAt = getServeBaseMs();
+        int capacidad = (int)(cajeros * (durMs / (double) tiempoAt));
+        // Meta = 60% de capacidad teórica + rampa por día y flujo
+        int meta = (int)(capacidad * 0.60) + (dia - 1) * 2 + nivelFlujo * 2;
+        return Math.max(5, Math.min(meta, 50));
+    }
+
+    // ── Bonus meta diaria ──
+    private static final long BONUS_META_DIA = 100;
+    public long getBonusMetaDia() { return BONUS_META_DIA; }
+    public void otorgarBonusMeta() { agregarMonedas(BONUS_META_DIA); }
 
     // ── Costos de mejoras ──
     public int costoCajeros()   { return costoMejora(BASE_CAJEROS,   nivelCajeros);   }

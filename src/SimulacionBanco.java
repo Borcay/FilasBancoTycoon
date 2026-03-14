@@ -1,5 +1,7 @@
 import java.util.*;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Collectors;
 
 public class SimulacionBanco {
@@ -7,6 +9,18 @@ public class SimulacionBanco {
     private static final int META_CLIENTES  = 200;
     private static final long DURACION_DIA  = 60_000;
     private static final Random random      = new Random();
+
+    // ── Ladrones activos visibles para la GUI ──
+    private final CopyOnWriteArrayList<Ladron> ladronesActivos = new CopyOnWriteArrayList<>();
+    private final AtomicBoolean primerLadronAvisado = new AtomicBoolean(false);
+
+    // ── Meta diaria ──
+    private volatile boolean bonusMetaOtorgadoHoy = false;
+
+    // ── Estadísticas de ladrones por día ──
+    private static final long RECOMPENSA_ATRAPA = 20L;
+    private volatile int ladronesAtrapados = 0;
+    private volatile int ladronesRobaron   = 0;
 
     private static final String[] NOMBRES_CAJERO =
         {"Pata","Patito","Mano","Manita","Beto","Caro","Tito","Lina"};
@@ -43,6 +57,7 @@ public class SimulacionBanco {
         sonido.iniciarMusicaFondo();
         cajeros.forEach(Cajero::iniciar);
         iniciarGeneradorClientes();
+        iniciarGeneradorLadrones();
         iniciarBalanceador();
         iniciarCicloDia();
     }
@@ -60,6 +75,10 @@ public class SimulacionBanco {
                     Cajero dst  = abiertos.stream()
                         .min(Comparator.comparingInt(Cajero::getTamanioCola)).orElse(abiertos.get(0));
                     dst.agregarCliente(cl);
+
+                    // Verificar meta diaria
+                    verificarMetaDiaria();
+
                     if (gui != null) gui.repaint();
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt(); break;
@@ -68,6 +87,98 @@ public class SimulacionBanco {
         }, "Generador");
         hiloGenerador.setDaemon(true);
         hiloGenerador.start();
+    }
+
+    /** Genera ladrones cada 20-40 segundos */
+    private void iniciarGeneradorLadrones() {
+        Thread t = new Thread(() -> {
+            try { Thread.sleep(15000 + random.nextInt(10000)); } // primer ladrón: entre 15-25s
+            catch (InterruptedException e) { return; }
+
+            while (!terminado) {
+                try {
+                    if (terminado) break;
+                    List<Cajero> abiertos = getCajerosAbiertos();
+                    if (!abiertos.isEmpty()) {
+                        Ladron ladron = new Ladron();
+                        Cajero dst = abiertos.get(random.nextInt(abiertos.size()));
+                        dst.agregarCliente(ladron);
+                        ladronesActivos.add(ladron);
+
+                        // Primer aviso al jugador
+                        if (primerLadronAvisado.compareAndSet(false, true) && gui != null) {
+                            javax.swing.SwingUtilities.invokeLater(() ->
+                                gui.mostrarAvisoLadron());
+                        }
+                    }
+                    Thread.sleep(20000 + random.nextInt(20000)); // cada 20-40s
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt(); break;
+                }
+            }
+        }, "GeneradorLadrones");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    /** El jugador hizo clic en un ladrón: lo atrapa */
+    public boolean intentarAtraparLadron(int mouseX, int mouseY) {
+        for (Ladron l : ladronesActivos) {
+            if (l.isEliminado() || l.isAtrapado()) continue;
+            double dx = mouseX - (l.getX() + 36);
+            double dy = mouseY - (l.getY() + 23);
+            if (dx*dx + dy*dy < 40*40) {
+                l.setAtrapado(true);
+                l.setEliminado(true);
+                l.setMostrandoPolicia(true);
+                l.setAlphaPolicia(1.0f);
+                for (Cajero c : cajeros) c.getCola().remove(l);
+                ladronesAtrapados++;
+                // Recompensa por atrapar al ladrón
+                eco.agregarMonedas(RECOMPENSA_ATRAPA);
+                if (gui != null) {
+                    final int fx = (int)l.getX(), fy = (int)l.getY();
+                    javax.swing.SwingUtilities.invokeLater(() ->
+                        gui.mostrarRecompensaLadron(fx, fy, RECOMPENSA_ATRAPA));
+                }
+                new Thread(() -> {
+                    try { Thread.sleep(1200); }
+                    catch (InterruptedException ignored) {}
+                    ladronesActivos.remove(l);
+                }).start();
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** Llamado por Cajero cuando atiende a un cliente — si es ladrón, roba */
+    public void ladronRobo(Ladron l) {
+        if (l.isAtrapado() || l.isEliminado()) return;
+        l.setRobando(true);
+        l.setEliminado(true);
+        ladronesActivos.remove(l);
+        ladronesRobaron++;
+        long robo = 50;
+        // No bajar de 0
+        // usamos Economia directamente para descontar
+        eco.descontarMonedas(robo);
+        if (gui != null) {
+            javax.swing.SwingUtilities.invokeLater(() ->
+                gui.mostrarRoboLadron((int)l.getX(), (int)l.getY(), robo));
+        }
+    }
+
+    /** Verifica si se alcanzó la meta diaria y otorga bonus */
+    private void verificarMetaDiaria() {
+        if (!bonusMetaOtorgadoHoy && hoyAtendidos.get() >= eco.getClientesObjetivoDia()) {
+            bonusMetaOtorgadoHoy = true;
+            eco.otorgarBonusMeta();
+            if (gui != null) {
+                javax.swing.SwingUtilities.invokeLater(() ->
+                    gui.mostrarBonusMeta(eco.getBonusMetaDia()));
+            }
+        }
     }
 
     private void iniciarBalanceador() {
@@ -113,13 +224,19 @@ public class SimulacionBanco {
     }
 
     private synchronized void nuevoDia() {
-        int diaAnterior = eco.getDia();
-        long ganancias  = eco.getGananciasHoy();
+        int diaAnterior  = eco.getDia();
+        long ganancias   = eco.getGananciasHoy();
+        long robado      = eco.getRobadoHoy();
+        int  atrapados   = ladronesAtrapados;
+        int  robaron     = ladronesRobaron;
         eco.nuevoDia();
         hoyAtendidos.set(0);
+        bonusMetaOtorgadoHoy = false;
+        ladronesAtrapados = 0;
+        ladronesRobaron   = 0;
         sincronizarCajeros();
         if (gui != null) {
-            gui.mostrarCambioDia(diaAnterior, eco.getDia(), ganancias);
+            gui.mostrarCambioDia(diaAnterior, eco.getDia(), ganancias, robado, atrapados, robaron);
             gui.onNuevoDia();
         }
         if (hiloGenerador != null) hiloGenerador.interrupt();
@@ -137,23 +254,31 @@ public class SimulacionBanco {
             c.iniciar();
             if (gui != null) gui.onCajeroAgregado(c);
         }
-        // marcar primer cajero como rápido si se compró la mejora
         if (eco.getNivelVelocidad() >= 3 && cajeros.stream().noneMatch(Cajero::isRapido))
             cajeros.get(0).setRapido(true);
     }
 
     public void clienteAtendido(Cliente cl, Cajero caj) {
         if (terminado) return;
+
+        // Si es ladrón y no fue atrapado: roba
+        if (cl instanceof Ladron l && !l.isAtrapado() && !l.isEliminado()) {
+            ladronRobo(l);
+            return;
+        }
+
         int tot = totalAtendidos.incrementAndGet();
         hoyAtendidos.incrementAndGet();
         eco.agregarMonedas(eco.getMonedasPorCliente(cl.isVip()));
         sonido.sonarClienteAtendido();
 
-        // Notificar GUI para fade + coin popup
         if (gui != null) {
             int cajIdx = cajeros.indexOf(caj);
             gui.iniciarFadeCliente(cl, Math.max(cajIdx, 0));
         }
+
+        // Verificar meta diaria
+        verificarMetaDiaria();
 
         if (tot >= META_CLIENTES) terminar();
     }
@@ -186,11 +311,12 @@ public class SimulacionBanco {
         if (gui != null) gui.mostrarFin();
     }
 
-    public List<Cajero> getCajeros()              { return cajeros; }
-    public int  getClientesAtendidosTotal()        { return totalAtendidos.get(); }
-    public int  getClientesAtendidosHoy()          { return hoyAtendidos.get(); }
-    public int  getMetaClientes()                  { return META_CLIENTES; }
-    public boolean isTerminado()                   { return terminado; }
-    public SonidoManager getSonido()               { return sonido; }
-    public long getDuracionDia()                   { return DURACION_DIA; }
+    public List<Cajero>  getCajeros()                { return cajeros; }
+    public int  getClientesAtendidosTotal()           { return totalAtendidos.get(); }
+    public int  getClientesAtendidosHoy()             { return hoyAtendidos.get(); }
+    public int  getMetaClientes()                     { return META_CLIENTES; }
+    public boolean isTerminado()                      { return terminado; }
+    public SonidoManager getSonido()                  { return sonido; }
+    public long getDuracionDia()                      { return DURACION_DIA; }
+    public List<Ladron> getLadronesActivos()          { return ladronesActivos; }
 }
