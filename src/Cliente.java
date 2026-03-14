@@ -1,6 +1,7 @@
 import java.util.Random;
 
 public class Cliente {
+
     private static final String[] NOMBRES = {
         "Andrés", "Sofía", "Carlos", "María", "Luis", "Ana", "Pedro", "Laura",
         "Miguel", "Paula", "Diego", "Valeria", "Jorge", "Camila", "Sergio",
@@ -13,50 +14,39 @@ public class Cliente {
     private static final Random random = new Random();
     private static int contadorId = 1;
 
-    private int id;
-    private String nombre;
+    private final int id;
+    private final String nombre;
+    private final boolean vip;       // cliente VIP da recompensa doble
     private boolean atendido;
 
-    // Estado de animación (para la GUI)
-    private double x;
-    private double y;
-    private double targetX;
-    private double targetY;
-    private boolean animando;
-    private boolean desapareciendo;
-    private float alpha; // para fade out
+    // ── posición animada (lerp hacia targetX/Y) ──
+    private double x, y;
+    private double targetX, targetY;
+    private float alpha = 1.0f;
+    private boolean desapareciendo = false;
 
-    public Cliente() {
-        this.id = contadorId++;
+    public Cliente(boolean vip) {
+        this.id     = contadorId++;
         this.nombre = NOMBRES[random.nextInt(NOMBRES.length)];
+        this.vip    = vip;
         this.atendido = false;
-        this.alpha = 1.0f;
-        this.animando = false;
-        this.desapareciendo = false;
     }
 
-    public int getId() { return id; }
-    public String getNombre() { return nombre; }
+    // ── getters / setters ──
+    public int     getId()      { return id; }
+    public String  getNombre()  { return nombre; }
+    public boolean isVip()      { return vip; }
     public boolean isAtendido() { return atendido; }
-    public void setAtendido(boolean atendido) { this.atendido = atendido; }
+    public void    setAtendido(boolean v) { this.atendido = v; }
 
-    public double getX() { return x; }
-    public void setX(double x) { this.x = x; }
-    public double getY() { return y; }
-    public void setY(double y) { this.y = y; }
-    public double getTargetX() { return targetX; }
-    public void setTargetX(double targetX) { this.targetX = targetX; }
-    public double getTargetY() { return targetY; }
-    public void setTargetY(double targetY) { this.targetY = targetY; }
-    public boolean isAnimando() { return animando; }
-    public void setAnimando(boolean animando) { this.animando = animando; }
+    public double getX()  { return x; }  public void setX(double v) { x = v; }
+    public double getY()  { return y; }  public void setY(double v) { y = v; }
+    public double getTargetX() { return targetX; } public void setTargetX(double v) { targetX = v; }
+    public double getTargetY() { return targetY; } public void setTargetY(double v) { targetY = v; }
+    public float  getAlpha()   { return alpha; }   public void setAlpha(float v)    { alpha = v; }
     public boolean isDesapareciendo() { return desapareciendo; }
-    public void setDesapareciendo(boolean desapareciendo) { this.desapareciendo = desapareciendo; }
-    public float getAlpha() { return alpha; }
-    public void setAlpha(float alpha) { this.alpha = alpha; }
+    public void   setDesapareciendo(boolean v) { desapareciendo = v; }
 
     @Override
-    public String toString() {
-        return nombre;
-    }
+    public String toString() { return nombre + (vip ? " ★" : ""); }
 }

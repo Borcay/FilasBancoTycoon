@@ -1,59 +1,53 @@
-import java.util.concurrent.LinkedBlockingQueue;
 import java.util.Random;
+import java.util.concurrent.LinkedBlockingQueue;
 
 public class Cajero implements Runnable {
+
     private static final Random random = new Random();
 
-    private String nombre;
-    private volatile boolean abierto;
-    private boolean rapido;
-    private LinkedBlockingQueue<Cliente> cola;
-    private Thread hiloAtencion;
-    private volatile boolean corriendo;
-    private SimulacionBanco simulacion;
+    private final String nombre;
+    private final SimulacionBanco simulacion;
+    private final Economia eco;
 
-    // Cliente que está siendo atendido ACTUALMENTE (fuera de la cola)
+    private volatile boolean abierto   = true;
+    private volatile boolean corriendo = false;
+    private boolean rapido;
+
+    private final LinkedBlockingQueue<Cliente> cola = new LinkedBlockingQueue<>();
     private volatile Cliente clienteEnAtencion = null;
 
-    private int tiempoAtencionMin;
-    private int tiempoAtencionMax;
+    // progreso de atención (0.0 – 1.0), actualizado por el hilo de atención
+    private volatile double progresoAtencion = 0.0;
 
-    private double x;
-    private double y;
+    private Thread hiloAtencion;
 
-    public Cajero(String nombre, boolean rapido, SimulacionBanco simulacion) {
-        this.nombre = nombre;
-        this.rapido = rapido;
+    // posición visual del cuadro del cajero
+    private double x, y;
+
+    public Cajero(String nombre, boolean rapido, SimulacionBanco simulacion, Economia eco) {
+        this.nombre     = nombre;
+        this.rapido     = rapido;
         this.simulacion = simulacion;
-        this.cola = new LinkedBlockingQueue<>();
-        this.abierto = true;
-        this.corriendo = false;
-
-        if (rapido) {
-            this.tiempoAtencionMin = 1500;
-            this.tiempoAtencionMax = 2500;
-        } else {
-            this.tiempoAtencionMin = 2000;
-            this.tiempoAtencionMax = 5000;
-        }
+        this.eco        = eco;
     }
 
     public void iniciar() {
         corriendo = true;
-
         hiloAtencion = new Thread(this, "Cajero-" + nombre);
         hiloAtencion.setDaemon(true);
         hiloAtencion.start();
+        iniciarCicloEstado();
+    }
 
-        Thread estadoHilo = new Thread(() -> {
+    /** Ciclo que abre/cierra el cajero aleatoriamente */
+    private void iniciarCicloEstado() {
+        Thread t = new Thread(() -> {
             while (corriendo && !simulacion.isTerminado()) {
                 try {
-                    int espera = 3000 + random.nextInt(7000);
-                    Thread.sleep(espera);
+                    Thread.sleep(8000 + random.nextInt(14000));
                     if (!corriendo || simulacion.isTerminado()) break;
                     cerrar();
-                    int tiempoCerrado = 2000 + random.nextInt(3000);
-                    Thread.sleep(tiempoCerrado);
+                    Thread.sleep(3000 + random.nextInt(5000));
                     if (!corriendo || simulacion.isTerminado()) break;
                     abrir();
                 } catch (InterruptedException e) {
@@ -62,79 +56,91 @@ public class Cajero implements Runnable {
                 }
             }
         }, "Estado-" + nombre);
-        estadoHilo.setDaemon(true);
-        estadoHilo.start();
+        t.setDaemon(true);
+        t.start();
     }
 
     @Override
     public void run() {
         while (corriendo && !simulacion.isTerminado()) {
             try {
-                // take() bloquea limpiamente hasta que haya cliente
                 Cliente cliente = cola.take();
-
                 if (!corriendo || simulacion.isTerminado()) break;
 
-                // Si el cajero cerró mientras esperaba, redirigir
+                // Si el cajero está cerrado al momento de tomar al cliente, redirigir
                 if (!abierto) {
                     simulacion.redirigirCliente(cliente, this);
                     continue;
                 }
 
-                // Marcar cliente activo ANTES de dormir
                 clienteEnAtencion = cliente;
+                progresoAtencion  = 0.0;
 
-                int tiempoAtencion = tiempoAtencionMin + random.nextInt(tiempoAtencionMax - tiempoAtencionMin);
-                Thread.sleep(tiempoAtencion);
+                long tiempoBase = eco.getServeBaseMs();
+                long tiempoReal = rapido
+                    ? (long)(tiempoBase * 0.55)
+                    : (long)(tiempoBase * (0.85 + random.nextDouble() * 0.30));
 
+                // Atender en pequeños pasos para poder abortar si cierran el cajero
+                int pasos = 60;
+                long msPorPaso = tiempoReal / pasos;
+                boolean abortado = false;
+
+                for (int i = 0; i < pasos; i++) {
+                    if (!corriendo || simulacion.isTerminado() || !abierto) {
+                        abortado = true;
+                        break;
+                    }
+                    Thread.sleep(msPorPaso);
+                    progresoAtencion = (double)(i + 1) / pasos;
+                }
+
+                if (abortado) {
+                    // El cajero cerró a mitad: redirigir al cliente
+                    Cliente enAtencion = clienteEnAtencion;
+                    clienteEnAtencion = null;
+                    progresoAtencion  = 0.0;
+                    if (enAtencion != null && !simulacion.isTerminado()) {
+                        simulacion.redirigirCliente(enAtencion, this);
+                    }
+                    Thread.interrupted(); // limpiar flag
+                    continue;
+                }
+
+                // Atención completada
                 if (!simulacion.isTerminado()) {
                     cliente.setAtendido(true);
                     cliente.setDesapareciendo(true);
                     simulacion.clienteAtendido(cliente, this);
                 }
-
                 clienteEnAtencion = null;
+                progresoAtencion  = 0.0;
 
             } catch (InterruptedException e) {
-                // Si fue interrumpido por cerrar(), clienteEnAtencion ya fue puesto a null
-                // y el cliente fue redirigido por cerrar(). Solo limpiamos y continuamos.
                 clienteEnAtencion = null;
-                Thread.interrupted(); // limpiar flag de interrupción para seguir el bucle
-                // No hacemos break: el hilo sigue corriendo para atender futuros clientes
+                progresoAtencion  = 0.0;
+                Thread.interrupted();
             }
         }
     }
 
     public void abrir() {
-        this.abierto = true;
-        System.out.println("[CAJERO] " + nombre + " ABIERTO");
+        abierto = true;
     }
 
     public void cerrar() {
-        this.abierto = false;
-        System.out.println("[CAJERO] " + nombre + " CERRADO - " + cola.size() + " en cola");
+        abierto = false;
 
-        // Redirigir clientes en cola
+        // Vaciar cola y redirigir
         java.util.List<Cliente> pendientes = new java.util.ArrayList<>();
         cola.drainTo(pendientes);
-        for (Cliente c : pendientes) {
-            simulacion.redirigirCliente(c, this);
-        }
+        for (Cliente c : pendientes) simulacion.redirigirCliente(c, this);
 
-        // Redirigir también al cliente que estaba siendo atendido
-        if (clienteEnAtencion != null) {
-            Cliente enAtencion = clienteEnAtencion;
-            clienteEnAtencion = null;
-            if (hiloAtencion != null) hiloAtencion.interrupt();
-            simulacion.redirigirCliente(enAtencion, this);
-        }
+        // El cliente en atención se redirigirá cuando el loop detecte !abierto
     }
 
-    public void agregarCliente(Cliente cliente) {
-        cola.offer(cliente);
-    }
+    public void agregarCliente(Cliente c)  { cola.offer(c); }
 
-    // Quita el último cliente de la cola (el más alejado del cajero) para balanceo
     public Cliente quitarUltimoCliente() {
         if (cola.isEmpty()) return null;
         java.util.List<Cliente> lista = new java.util.ArrayList<>(cola);
@@ -149,15 +155,17 @@ public class Cajero implements Runnable {
         if (hiloAtencion != null) hiloAtencion.interrupt();
     }
 
-    public String getNombre() { return nombre; }
-    public boolean isAbierto() { return abierto; }
-    public boolean isRapido() { return rapido; }
-    public LinkedBlockingQueue<Cliente> getCola() { return cola; }
-    public int getTamañoCola() { return cola.size(); }
-    public Cliente getClienteEnAtencion() { return clienteEnAtencion; }
+    // Permite actualizar la velocidad cuando se compra la mejora
+    public void setRapido(boolean rapido) { this.rapido = rapido; }
 
-    public double getX() { return x; }
-    public void setX(double x) { this.x = x; }
-    public double getY() { return y; }
-    public void setY(double y) { this.y = y; }
+    public String  getNombre()             { return nombre; }
+    public boolean isAbierto()             { return abierto; }
+    public boolean isRapido()              { return rapido; }
+    public LinkedBlockingQueue<Cliente> getCola() { return cola; }
+    public int     getTamanioCola()        { return cola.size(); }
+    public Cliente getClienteEnAtencion()  { return clienteEnAtencion; }
+    public double  getProgresoAtencion()   { return progresoAtencion; }
+
+    public double getX() { return x; } public void setX(double v) { x = v; }
+    public double getY() { return y; } public void setY(double v) { y = v; }
 }

@@ -3,11 +3,12 @@ import javax.swing.*;
 public class Main {
     public static void main(String[] args) {
         SwingUtilities.invokeLater(() -> {
-            SimulacionBanco simulacion = new SimulacionBanco();
-            InterfazGrafica gui = new InterfazGrafica(simulacion, simulacion.getSonido());
-            simulacion.setGui(gui);
+            Economia eco = new Economia();
+            SimulacionBanco sim = new SimulacionBanco(eco);
+            InterfazGrafica gui = new InterfazGrafica(sim, eco);
+            sim.setGui(gui);
             gui.setVisible(true);
-            simulacion.iniciar();
+            sim.iniciar();
         });
     }
 }
