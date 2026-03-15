@@ -101,9 +101,14 @@ public class InterfazGrafica extends JFrame {
     private JButton btnPausa;
 
     // ── Pase de Batalla ──
-    private JPanel  pnlXpIndicador;       // mini indicador clickeable en header
-    private JLabel  lblXpNivel;           // "Nv. 5"
-    private JLabel  lblXpProgress;        // "320 / 550 XP"
+    private JPanel  pnlXpIndicador;
+    private JLabel  lblXpNivel;
+    private JLabel  lblXpProgress;
+
+    // ── Prestige ──
+    private JLabel  lblBilletes;          // muestra billetes en header
+    private JButton btnBancos;            // visible solo tras primer prestige
+    private VentanaBancos ventanaBancos;  // instancia actual de la ventana de bancos
     // Notificación de subida de nivel (overlay en pantalla principal)
     private volatile boolean mostrandoNotifNivel = false;
     private volatile int     notifNivel          = 0;
@@ -282,11 +287,50 @@ public class InterfazGrafica extends JFrame {
         // Centrar ambos cuadros (monedas + XP) juntos
         JPanel centroWrap = new JPanel(new FlowLayout(FlowLayout.CENTER, 14, 6));
         centroWrap.setOpaque(false);
+
+        // Panel billetes (solo visible tras primer prestige)
+        JPanel panelBilletes = new JPanel() {
+            @Override protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(new Color(80, 30, 140, 180));
+                g2.fillRoundRect(0,0,getWidth()-1,getHeight()-1,12,12);
+                g2.setColor(new Color(180,120,255,160));
+                g2.drawRoundRect(0,0,getWidth()-1,getHeight()-1,12,12);
+            }
+        };
+        panelBilletes.setLayout(new BoxLayout(panelBilletes, BoxLayout.Y_AXIS));
+        panelBilletes.setOpaque(false);
+        panelBilletes.setBorder(new EmptyBorder(6,14,6,14));
+        panelBilletes.setVisible(false); // oculto hasta primer prestige
+
+        JLabel billeteLbl = new JLabel("BILLETES");
+        billeteLbl.setFont(new Font("Segoe UI", Font.BOLD, 9));
+        billeteLbl.setForeground(new Color(200,160,255,200));
+        billeteLbl.setAlignmentX(Component.CENTER_ALIGNMENT);
+
+        lblBilletes = new JLabel("0 B");
+        lblBilletes.setFont(new Font("Segoe UI", Font.BOLD, 22));
+        lblBilletes.setForeground(new Color(210, 150, 255));
+        lblBilletes.setAlignmentX(Component.CENTER_ALIGNMENT);
+        lblBilletes.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        lblBilletes.setToolTipText("Ver arbol de habilidades");
+        lblBilletes.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) { abrirArbolHabilidades(); }
+        });
+
+        panelBilletes.add(billeteLbl);
+        panelBilletes.add(lblBilletes);
+
         centroWrap.add(centroMon);
         centroWrap.add(pnlXpIndicador);
+        centroWrap.add(panelBilletes);
+        // Guardar referencia para hacerlo visible tras prestige
+        centroWrap.putClientProperty("panelBilletes", panelBilletes);
+        p.putClientProperty("centroWrap", centroWrap);
         p.add(centroWrap, BorderLayout.CENTER);
 
-        // Derecha: timer + leyenda
+        // Derecha: timer + leyenda + botón bancos
         JPanel der = new JPanel();
         der.setLayout(new BoxLayout(der, BoxLayout.Y_AXIS));
         der.setOpaque(false);
@@ -298,7 +342,21 @@ public class InterfazGrafica extends JFrame {
         lblTimerHeader.setAlignmentX(Component.RIGHT_ALIGNMENT);
         der.add(lblTimerHeader);
 
-        der.add(Box.createVerticalStrut(6));
+        der.add(Box.createVerticalStrut(4));
+
+        btnBancos = new JButton("Mis Bancos");
+        btnBancos.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        btnBancos.setForeground(Color.WHITE);
+        btnBancos.setBackground(new Color(80, 50, 160));
+        btnBancos.setBorderPainted(false);
+        btnBancos.setFocusPainted(false);
+        btnBancos.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btnBancos.setAlignmentX(Component.RIGHT_ALIGNMENT);
+        btnBancos.setVisible(false); // oculto hasta primer prestige
+        btnBancos.addActionListener(e -> abrirVentanaBancos());
+        der.add(btnBancos);
+
+        der.add(Box.createVerticalStrut(4));
 
         JPanel leyenda = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
         leyenda.setOpaque(false);
@@ -483,17 +541,24 @@ public class InterfazGrafica extends JFrame {
         card.setOpaque(false);
         card.setBorder(new EmptyBorder(9,11,9,11));
 
+        // Flag para saber si el mouse está encima
+        boolean[] hovering = { false };
+
         card.addMouseListener(new MouseAdapter() {
             @Override public void mouseEntered(MouseEvent e) {
+                hovering[0] = true;
                 if (!esBloqueado(idx) && nivelMejora(idx) < maxMejora(idx))
                     card.setBackground(C_UPG_HOVER);
-                else
-                    card.setBackground(nivelMejora(idx) >= maxMejora(idx) ? C_UPG_MAX_BG
-                                     : esBloqueado(idx) ? C_UPG_LOCKED : C_UPG_BG);
             }
-            @Override public void mouseExited(MouseEvent e) { refrescarColorTarjeta(card, idx); }
+            @Override public void mouseExited(MouseEvent e) {
+                hovering[0] = false;
+                refrescarColorTarjeta(card, idx);
+            }
             @Override public void mouseClicked(MouseEvent e) { onMejora(idx); }
         });
+
+        // Guardar referencia al flag en el panel para que refrescarColorTarjeta lo respete
+        card.putClientProperty("hovering", hovering);
 
         refrescarColorTarjeta(card, idx);
         rellenarTarjeta(card, idx);
@@ -503,9 +568,16 @@ public class InterfazGrafica extends JFrame {
     private void refrescarColorTarjeta(JPanel card, int idx) {
         boolean maxed = nivelMejora(idx) >= maxMejora(idx);
         boolean bloq  = esBloqueado(idx);
-        if (maxed)     card.setBackground(C_UPG_MAX_BG);
-        else if (bloq) card.setBackground(C_UPG_LOCKED);
-        else           card.setBackground(C_UPG_BG);
+        boolean[] hovering = (boolean[]) card.getClientProperty("hovering");
+        boolean isHover = hovering != null && hovering[0];
+        if (isHover && !bloq && !maxed) card.setBackground(C_UPG_HOVER);
+        else if (maxed)     card.setBackground(C_UPG_MAX_BG);
+        else if (bloq)      card.setBackground(C_UPG_LOCKED);
+        else                card.setBackground(C_UPG_BG);
+        // Bug9: actualizar color del nombre según si tiene dinero o no
+        JLabel lNom = (JLabel) card.getClientProperty("lblNombre");
+        if (lNom != null)
+            lNom.setForeground(bloq ? new Color(150,160,180) : C_TXT_CAJERO);
         card.repaint();
     }
 
@@ -524,6 +596,8 @@ public class InterfazGrafica extends JFrame {
         JLabel lNom = new JLabel(UPG_NOMBRES[idx]);
         lNom.setFont(new Font("Segoe UI", Font.BOLD, 12));
         lNom.setForeground(bloq ? new Color(150,160,180) : C_TXT_CAJERO);
+        // Bug9: guardar referencia al label para actualizar su color sin recrear la tarjeta
+        card.putClientProperty("lblNombre", lNom);
         top.add(lNom, BorderLayout.WEST);
 
         JLabel lCosto;
@@ -585,9 +659,16 @@ public class InterfazGrafica extends JFrame {
         if (ok) {
             sim.sincronizarCajeros();
             SwingUtilities.invokeLater(this::actualizarPanelInferior);
-            // Mensaje especial al alcanzar capacidad máxima de cajeros
-            if (idx == 0 && eco.getNivelCajeros() >= Economia.MAX_CAJEROS) {
-                mostrarToast("🎉 ¡Felicitaciones! Alcanzaste la capacidad máxima de cajeros.", new Color(26,154,80));
+            // Bug8: mensaje de felicitaciones para TODAS las mejoras al llegar al máximo
+            if (nivelMejora(idx) >= maxMejora(idx)) {
+                String[] mensajes = {
+                    "Alcanzaste la capacidad maxima de cajeros.",
+                    "Alcanzaste el maximo de afluencia de clientes.",
+                    "Todos los cajeros estan a maxima velocidad.",
+                    "Comision maxima alcanzada.",
+                    "Sala VIP al maximo nivel."
+                };
+                mostrarToast("Felicitaciones! " + mensajes[idx], new Color(26,154,80));
             }
         }
     }
@@ -697,6 +778,9 @@ public class InterfazGrafica extends JFrame {
         b.setBorderPainted(false);
         b.setFocusPainted(false);
         b.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        b.setPreferredSize(new Dimension(80, 26));
+        b.setMinimumSize(new Dimension(80, 26));
+        b.setMaximumSize(new Dimension(80, 26));
         return b;
     }
 
@@ -739,6 +823,11 @@ public class InterfazGrafica extends JFrame {
         lblNumCajeros.setText(String.valueOf(sim.getCajeros().size()));
         lblVelocidad.setText(String.format("%.1fs", eco.getServeBaseMs()/1000.0));
         if (lblTiempoJuego != null) lblTiempoJuego.setText(tiempoStr);
+        // Actualizar billetes
+        PrestigioManager pr = sim.getPrestigio();
+        if (pr != null && lblBilletes != null) {
+            lblBilletes.setText(pr.getBilletes() + " B");
+        }
         // Actualizar mini indicador XP
         PaseBatalla pb = sim.getPaseBatalla();
         if (pb != null && lblXpNivel != null) {
@@ -965,6 +1054,8 @@ public class InterfazGrafica extends JFrame {
                         }
                     }
                     sim.intentarAtraparLadron(e.getX(), e.getY());
+                    // Atención manual si la habilidad está desbloqueada
+                    sim.atenderManual(e.getX(), e.getY());
                 }
             });
         }
@@ -1345,6 +1436,105 @@ public class InterfazGrafica extends JFrame {
     }
 
     // ══════════════════════════════════════════════════
+    //  PRESTIGE
+    // ══════════════════════════════════════════════════
+
+    /** Llamado por SimulacionBanco cuando se llega a 200 clientes */
+    public void ofrecerPrestigio() {
+        SwingUtilities.invokeLater(() -> {
+            PrestigioManager pr = sim.getPrestigio();
+            VentanaPrestigio vp = new VentanaPrestigio(this, pr, sim.getClientesAtendidosTotal());
+            vp.setVisible(true);
+
+            if (vp.getResultado() == VentanaPrestigio.Resultado.PRESTIGE) {
+                // Dar billetes y reiniciar
+                pr.agregarBilletes(pr.billetesDelPrestige());
+                pr.incrementarPrestigios();
+                activarUIPrestigio();
+                // Reiniciar la simulación actual
+                reiniciarSimulacion();
+            } else {
+                // Continuar: simplemente seguir jugando sin reiniciar
+                mostrarToast("Continuas jugando. El contador sigue...", new Color(60,120,220));
+                // Reactivar el animTimer si se habia parado
+                if (!animTimer.isRunning()) animTimer.start();
+            }
+        });
+    }
+
+    /** Muestra los elementos de prestige en la UI (billetes, botón bancos) */
+    public void activarUIPrestigioPublico() { activarUIPrestigio(); }
+
+    private void activarUIPrestigio() {
+        // Hacer visibles los elementos de prestige
+        if (lblBilletes != null) {
+            // Buscar el panelBilletes guardado en el centroWrap
+            Component[] comps = ((JPanel) getContentPane().getComponent(0)).getComponents();
+            // Recorrer para encontrar el panelBilletes via clientProperty
+            buscarYMostrarBilletes(getContentPane());
+        }
+        if (btnBancos != null) btnBancos.setVisible(true);
+        revalidate(); repaint();
+    }
+
+    private void buscarYMostrarBilletes(Container c) {
+        for (Component comp : c.getComponents()) {
+            if (comp instanceof JPanel jp) {
+                Object pb = jp.getClientProperty("panelBilletes");
+                if (pb instanceof JPanel panelB) { panelB.setVisible(true); return; }
+                buscarYMostrarBilletes(jp);
+            }
+        }
+    }
+
+    /** Reinicia la simulación del banco actual para el nuevo prestige */
+    private void reiniciarSimulacion() {
+        animTimer.stop();
+        // La lógica de reinicio real está en Main a través de un callback
+        // Por ahora mostramos mensaje y cerramos/reabrimos
+        mostrarToast("Prestige realizado! +1 Billete. Reiniciando banco...", new Color(180,120,255));
+        // Esperar 2s y reiniciar via System.exit con flag — o notificar al Main
+        // Como Main es el orquestador, usamos un callback registrado
+        if (onPrestigio != null) onPrestigio.run();
+    }
+
+    private Runnable onPrestigio;
+    public void setOnPrestigio(Runnable r) { this.onPrestigio = r; }
+
+    private void abrirArbolHabilidades() {
+        PrestigioManager pr = sim.getPrestigio();
+        if (pr == null) return;
+        VentanaArbolHabilidades v = new VentanaArbolHabilidades(this, pr,
+            () -> SwingUtilities.invokeLater(this::actualizarPanelInferior));
+        v.setVisible(true);
+    }
+
+    private void abrirVentanaBancos() {
+        if (ventanaBancos != null && ventanaBancos.isVisible()) {
+            ventanaBancos.toFront(); return;
+        }
+        PrestigioManager pr = sim.getPrestigio();
+        if (pr == null) return;
+        // Obtener lista de sims y ecos del Main via callback
+        if (onAbrirBancos != null) onAbrirBancos.run();
+    }
+
+    private Runnable onAbrirBancos;
+    public void setOnAbrirBancos(Runnable r) { this.onAbrirBancos = r; }
+
+    public void mostrarVentanaBancos(java.util.List<SimulacionBanco> sims,
+                                     java.util.List<Economia> ecos,
+                                     PrestigioManager pr,
+                                     Runnable onCompraBanco) {
+        if (ventanaBancos != null) ventanaBancos.detenerRefresh();
+        ventanaBancos = new VentanaBancos(this, sims, ecos, pr, () -> {
+            if (onCompraBanco != null) onCompraBanco.run();
+            SwingUtilities.invokeLater(() -> mostrarToast("Nuevo banco comprado!", new Color(180,120,255)));
+        });
+        ventanaBancos.setVisible(true);
+    }
+
+    // ══════════════════════════════════════════════════
     //  FIN DEL JUEGO
     // ══════════════════════════════════════════════════
     public void mostrarFin() {
@@ -1367,7 +1557,7 @@ public class InterfazGrafica extends JFrame {
 
             JPanel stats = new JPanel(new GridLayout(1,3,12,0));
             stats.setBackground(C_FONDO);
-            stats.add(finStat("Monedas totales","$"+eco.getMonedas()));
+            stats.add(finStat("Monedas totales","$"+eco.getTotalGanado()));
             stats.add(finStat("Tiempo total", fmt(seg/60)+":"+fmt(seg%60)));
             stats.add(finStat("Mejor dia","$"+eco.getMejorDia()));
 

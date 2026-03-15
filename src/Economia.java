@@ -12,6 +12,10 @@ public class Economia {
     public void setPaseBatalla(PaseBatalla p) { this.paseBatalla = p; }
     public PaseBatalla getPaseBatalla()       { return paseBatalla; }
 
+    // ── Prestige ──
+    private PrestigioManager prestige;
+    public void setPrestigio(PrestigioManager p) { this.prestige = p; }
+
     // ── Niveles máximos de cada mejora ──
     public static final int MAX_CAJEROS    = 4;   // niveles extra (total 1+4=5 cajeros)
     public static final int MAX_FLUJO      = 4;
@@ -29,6 +33,7 @@ public class Economia {
     private final AtomicLong monedas = new AtomicLong(0);
     private final AtomicLong gananciasHoy = new AtomicLong(0);
     private final AtomicLong robadoHoy    = new AtomicLong(0);
+    private final AtomicLong totalGanado  = new AtomicLong(0);
     private volatile long mejorDia = 0;
 
     private volatile int dia = 1;
@@ -66,8 +71,12 @@ public class Economia {
     }
 
     public void agregarMonedas(long cantidad) {
-        monedas.addAndGet(cantidad);
-        gananciasHoy.addAndGet(cantidad);
+        long cantidadFinal = prestige != null
+            ? Math.round(cantidad * prestige.multiplicadorMonedas())
+            : cantidad;
+        monedas.addAndGet(cantidadFinal);
+        gananciasHoy.addAndGet(cantidadFinal);
+        totalGanado.addAndGet(cantidadFinal);
     }
 
     public void descontarMonedas(long cantidad) {
@@ -78,6 +87,7 @@ public class Economia {
     public long getGananciasHoy() { return gananciasHoy.get(); }
     public long getRobadoHoy()    { return robadoHoy.get(); }
     public long getMejorDia()     { return mejorDia; }
+    public long getTotalGanado()  { return totalGanado.get(); }
 
     // ── Día ──
     public int  getDia()         { return dia; }
@@ -125,7 +135,8 @@ public class Economia {
     public int costoVip()       { return costoMejora(BASE_VIP,       nivelVip);       }
 
     private int costoMejora(int base, int nivel) {
-        return (int) Math.round(base * Math.pow(1.7, nivel));
+        double mult = prestige != null ? prestige.multiplicadorCostoMejoras() : 1.0;
+        return (int) Math.round(base * Math.pow(1.7, nivel) * mult);
     }
 
     // ── Niveles getter/setter ──
@@ -140,4 +151,8 @@ public class Economia {
     public synchronized boolean mejorarVelocidad() { if (nivelVelocidad >= MAX_VELOCIDAD || !gastarSync(costoVelocidad())) return false; nivelVelocidad++; return true; }
     public synchronized boolean mejorarMonedas()   { if (nivelMonedas   >= MAX_MONEDAS   || !gastarSync(costoMonedas()))   return false; nivelMonedas++;   return true; }
     public synchronized boolean mejorarVip()       { if (nivelVip       >= MAX_VIP       || !gastarSync(costoVip()))       return false; nivelVip++;       return true; }
+
+    /** Mejoras gratuitas para la habilidad de prestige "Mejoras Iniciales" */
+    public synchronized void mejorarVelocidadGratis() { if (nivelVelocidad < MAX_VELOCIDAD) nivelVelocidad++; }
+    public synchronized void mejorarFlujoGratis()     { if (nivelFlujo     < MAX_FLUJO)     nivelFlujo++;     }
 }

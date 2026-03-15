@@ -30,9 +30,11 @@ public class SimulacionBanco {
     private final AtomicInteger hoyAtendidos   = new AtomicInteger(0);
 
     private volatile boolean terminado = false;
+    private volatile boolean prestigioPendiente = false; // 200 alcanzados, esperando decisión
     private final Economia eco;
     private InterfazGrafica gui;
     private final SonidoManager sonido;
+    private PrestigioManager prestige; // puede ser null si no hay prestige aún
 
     private volatile Thread hiloGenerador;
     private PaseBatalla paseBatalla;
@@ -43,6 +45,17 @@ public class SimulacionBanco {
         this.paseBatalla = new PaseBatalla(eco);
         eco.setPaseBatalla(paseBatalla);
         inicializarCajeros(eco.getMaxCajeros());
+    }
+
+    /** Asociar el PrestigioManager global (llamado desde Main después de construir) */
+    public void setPrestigio(PrestigioManager p) {
+        this.prestige = p;
+        eco.setPrestigio(p);
+        // Si hay mejoras iniciales desbloqueadas, aplicarlas
+        if (p != null && p.tieneMejorasIniciales()) {
+            eco.mejorarVelocidadGratis();
+            eco.mejorarFlujoGratis();
+        }
     }
 
     private void inicializarCajeros(int n) {
@@ -99,10 +112,10 @@ public class SimulacionBanco {
         hiloGenerador.start();
     }
 
-    /** Genera ladrones cada 20-40 segundos */
+    /** Genera ladrones cada 20-40 segundos (modificado por habilidad de prestige) */
     private void iniciarGeneradorLadrones() {
         Thread t = new Thread(() -> {
-            try { Thread.sleep(15000 + random.nextInt(10000)); } // primer ladrón: entre 15-25s
+            try { Thread.sleep(15000 + random.nextInt(10000)); }
             catch (InterruptedException e) { return; }
 
             while (!terminado) {
@@ -115,13 +128,15 @@ public class SimulacionBanco {
                         dst.agregarCliente(ladron);
                         ladronesActivos.add(ladron);
 
-                        // Primer aviso al jugador
                         if (primerLadronAvisado.compareAndSet(false, true) && gui != null) {
                             javax.swing.SwingUtilities.invokeLater(() ->
                                 gui.mostrarAvisoLadron());
                         }
                     }
-                    Thread.sleep(20000 + random.nextInt(20000)); // cada 20-40s
+                    // Aplicar multiplicador de prestige al intervalo
+                    double mult = (prestige != null) ? prestige.multiplicadorIntervaloLadrones() : 1.0;
+                    long baseMs = (long)((20000 + random.nextInt(20000)) * mult);
+                    Thread.sleep(baseMs);
                 } catch (InterruptedException e) {
                     Thread.currentThread().interrupt(); break;
                 }
@@ -323,16 +338,56 @@ public class SimulacionBanco {
         terminado = true;
         cajeros.forEach(Cajero::detener);
         sonido.sonarFin();
-        if (gui != null) gui.mostrarFin();
+        if (gui != null) gui.ofrecerPrestigio();
     }
 
-    public List<Cajero>  getCajeros()                { return cajeros; }
-    public int  getClientesAtendidosTotal()           { return totalAtendidos.get(); }
-    public int  getClientesAtendidosHoy()             { return hoyAtendidos.get(); }
-    public int  getMetaClientes()                     { return META_CLIENTES; }
-    public boolean isTerminado()                      { return terminado; }
-    public SonidoManager getSonido()                  { return sonido; }
-    public long getDuracionDia()                      { return DURACION_DIA; }
-    public List<Ladron> getLadronesActivos()          { return ladronesActivos; }
-    public PaseBatalla  getPaseBatalla()              { return paseBatalla; }
+    /** Click manual: atiende al primer cliente en cola del cajero más cercano al click */
+    public boolean atenderManual(int mouseX, int mouseY) {
+        if (prestige == null || !prestige.tieneClickManual()) return false;
+        // Buscar el cliente más cercano en cualquier cola
+        Cliente candidato = null;
+        double minDist = 50 * 50;
+        for (Cajero c : cajeros) {
+            for (Cliente cl : new java.util.ArrayList<>(c.getCola())) {
+                if (cl instanceof Ladron) continue;
+                double dx = mouseX - (cl.getX() + 36);
+                double dy = mouseY - (cl.getY() + 23);
+                double dist = dx*dx + dy*dy;
+                if (dist < minDist) { minDist = dist; candidato = cl; }
+            }
+        }
+        if (candidato == null) return false;
+        // Removerlo de la cola y atenderlo con 50% de monedas
+        final Cliente cl = candidato;
+        for (Cajero c : cajeros) c.getCola().remove(cl);
+        int tot = totalAtendidos.incrementAndGet();
+        hoyAtendidos.incrementAndGet();
+        long monedas = Math.round(eco.getMonedasPorCliente(cl.isVip()) * 0.5);
+        eco.agregarMonedas(monedas);
+        if (paseBatalla != null)
+            paseBatalla.agregarXP(cl.isVip() ? PaseBatalla.XP_CLIENTE_VIP : PaseBatalla.XP_CLIENTE_NORMAL);
+        if (gui != null) {
+            int cajIdx = 0;
+            for (int i = 0; i < cajeros.size(); i++) {
+                if (cajeros.get(i).getCola().contains(cl)) { cajIdx = i; break; }
+            }
+            gui.iniciarFadeCliente(cl, cajIdx);
+        }
+        verificarMetaDiaria();
+        if (tot >= META_CLIENTES) terminar();
+        return true;
+    }
+
+    public List<Cajero>  getCajeros()               { return cajeros; }
+    public int  getClientesAtendidosTotal()          { return totalAtendidos.get(); }
+    public int  getClientesAtendidosHoy()            { return hoyAtendidos.get(); }
+    public int  getMetaClientes()                    { return META_CLIENTES; }
+    public boolean isTerminado()                     { return terminado; }
+    public SonidoManager getSonido()                 { return sonido; }
+    public long getDuracionDia()                     { return DURACION_DIA; }
+    public List<Ladron> getLadronesActivos()         { return ladronesActivos; }
+    public PaseBatalla  getPaseBatalla()             { return paseBatalla; }
+    public PrestigioManager getPrestigio()           { return prestige; }
+    public Economia getEco()                         { return eco; }
 }
+

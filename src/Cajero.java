@@ -155,6 +155,13 @@ public class Cajero implements Runnable {
         if (hiloAtencion != null) hiloAtencion.interrupt();
     }
 
+    /** Bug6: Expulsa al cliente que está siendo atendido (usado para atrapar ladrones mid-atencion) */
+    public void expulsarClienteEnAtencion() {
+        clienteEnAtencion = null;
+        progresoAtencion  = 0.0;
+        if (hiloAtencion != null) hiloAtencion.interrupt();
+    }
+
     // Permite actualizar la velocidad cuando se compra la mejora
     public void setRapido(boolean rapido) { this.rapido = rapido; }
 

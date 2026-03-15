@@ -79,8 +79,15 @@ public class SonidoManager {
         if (clipMusica == null) return;
         try {
             FloatControl ctrl = (FloatControl) clipMusica.getControl(FloatControl.Type.MASTER_GAIN);
-            float dB = (volumen == 0f) ? ctrl.getMinimum() : 20f * (float) Math.log10(volumen);
-            ctrl.setValue(Math.max(ctrl.getMinimum(), Math.min(ctrl.getMaximum(), dB)));
+            float dB = (volumen <= 0f) ? ctrl.getMinimum() : 20f * (float) Math.log10(volumen);
+            dB = Math.max(ctrl.getMinimum(), Math.min(ctrl.getMaximum(), dB));
+            ctrl.setValue(dB);
+            // Bug2 fix: forzar que el motor de audio aplique el nuevo gain inmediatamente
+            // haciendo un micro-seek al frame actual
+            if (!pausado && clipMusica.isRunning()) {
+                int frame = clipMusica.getFramePosition();
+                clipMusica.setFramePosition(frame);
+            }
         } catch (IllegalArgumentException ignored) {}
     }
 
