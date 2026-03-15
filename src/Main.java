@@ -5,86 +5,121 @@ import java.util.List;
 
 public class Main {
 
+    // ── MODO DEBUG ────────────────────────────────────────────────────────
+    // Cambia a true para arrancar con billetes y prestige ya activo.
+    // Cambia a false antes de entregar/publicar el juego.
+    private static final boolean DEBUG = true;
+    // ─────────────────────────────────────────────────────────────────────
+
     private static final List<SimulacionBanco> todasSims = new ArrayList<>();
     private static final List<Economia>        todasEcos = new ArrayList<>();
     private static final PrestigioManager      prestige  = new PrestigioManager();
     private static InterfazGrafica             guiActual;
 
     public static void main(String[] args) {
-        // PaseBatalla global sin eco — se conecta al eco activo en setPrestigio()
         prestige.setPaseBatallaGlobal(new PaseBatalla(null));
-        SwingUtilities.invokeLater(() -> iniciarNuevoBanco(false));
+
+        if (DEBUG) aplicarEstadoDebug();
+
+        SwingUtilities.invokeLater(() -> iniciarNuevoBanco(-1));
     }
 
-    private static void iniciarNuevoBanco(boolean esPrestigio) {
+    private static void aplicarEstadoDebug() {
+        // Simular 1 prestige ya hecho + 10 billetes para probar el árbol y los bancos
+        prestige.incrementarPrestigios();
+        prestige.agregarBilletes(1000);
+    }
+
+    /**
+     * Inicia un banco nuevo.
+     * @param indiceAReemplazar -1 = primer arranque o banco adicional,
+     *                          >=0 = índice del banco que se prestige y se reinicia
+     */
+    private static void iniciarNuevoBanco(int indiceAReemplazar) {
         Economia eco = new Economia();
         SimulacionBanco sim = new SimulacionBanco(eco);
         sim.setPrestigio(prestige);
 
-        if (!esPrestigio || todasSims.isEmpty()) {
+        boolean esPrestigio = indiceAReemplazar >= 0;
+
+        if (!esPrestigio) {
             todasSims.add(sim);
             todasEcos.add(eco);
         } else {
-            // Detener el banco viejo antes de reemplazarlo
-            SimulacionBanco bancoViejo = todasSims.get(0);
+            // Detener el banco viejo
+            SimulacionBanco bancoViejo = todasSims.get(indiceAReemplazar);
             bancoViejo.detenerTodo();
-            todasSims.set(0, sim);
-            todasEcos.set(0, eco);
+            todasSims.set(indiceAReemplazar, sim);
+            todasEcos.set(indiceAReemplazar, eco);
         }
 
-        if (guiActual != null) guiActual.dispose();
-
-        guiActual = new InterfazGrafica(sim, eco);
-        sim.setGui(guiActual);
-
-        // Callback: prestige realizado
-        guiActual.setOnPrestigio(() -> SwingUtilities.invokeLater(() -> iniciarNuevoBanco(true)));
-
-        // Callback: cambiar vista a un banco distinto
-        guiActual.setOnCambiarBanco((InterfazGrafica.BancoIndexConsumer) idx -> SwingUtilities.invokeLater(() -> {
-            if (idx < 0 || idx >= todasSims.size()) return;
-            SimulacionBanco s = todasSims.get(idx);
-            Economia e = todasEcos.get(idx);
-            guiActual.cambiarVistaBanco(s, e);
+        // Si no hay GUI aún, crearla con el primer banco
+        if (guiActual == null) {
+            guiActual = new InterfazGrafica(sim, eco);
+            sim.setGui(guiActual);
+            registrarCallbacks();
+        } else if (esPrestigio) {
+            // Cambiar la vista al banco recién reiniciado
+            sim.setGui(guiActual);
+            guiActual.cambiarVistaBanco(sim, eco);
             guiActual.refrescarPanelLateral(new ArrayList<>(todasSims));
-        }));
+            guiActual.mostrarToast("Prestige! +1 Billete. Banco " + (indiceAReemplazar+1) + " reiniciado.", new Color(180,120,255));
+        }
 
-        guiActual.setOnObtenerIndiceBanco((InterfazGrafica.BancoIndexFunction) s -> todasSims.indexOf(s));
-
-        // Callback: refrescar cubos (tras prestige)
-        guiActual.setOnRefrescarCubos(() -> SwingUtilities.invokeLater(() ->
-            guiActual.refrescarPanelLateral(new ArrayList<>(todasSims))));
-
-        // Callback: abrir ventana de bancos (ya no se usa, panel es lateral)
-        guiActual.setOnAbrirBancos(() -> {});
-
-        // Callback: comprar nuevo banco desde panel lateral
-        guiActual.setOnCompraBancoLateral(() -> SwingUtilities.invokeLater(() -> {
-            if (prestige.comprarBanco()) {
-                agregarNuevoBanco();
-                guiActual.mostrarToast("Nuevo banco comprado!", new Color(180, 120, 255));
-            } else {
-                guiActual.mostrarToast("Sin billetes suficientes (" + prestige.costoBanco() + " B necesarios)", new Color(180, 60, 60));
-            }
-        }));
-
-        // Si ya hizo al menos 1 prestige, mostrar UI de prestige y panel lateral
+        // Activar UI de prestige si ya se ha prestigiado
         if (prestige.getPrestigios() > 0) {
             guiActual.activarUIPrestigioPublico();
             guiActual.refrescarPanelLateral(new ArrayList<>(todasSims));
         }
 
-        guiActual.setVisible(true);
+        if (!guiActual.isVisible()) guiActual.setVisible(true);
         sim.iniciar();
     }
 
-    /** Compra un nuevo banco y lo arranca en paralelo */
-    public static void agregarNuevoBanco() {
+    private static void registrarCallbacks() {
+        // Prestige de cualquier banco — recibe el sim que lo disparó
+        guiActual.setOnPrestigioConBanco((InterfazGrafica.SimConsumer) simQuePrestigia ->
+            SwingUtilities.invokeLater(() -> {
+                int idx = todasSims.indexOf(simQuePrestigia);
+                if (idx < 0) idx = 0;
+                iniciarNuevoBanco(idx);
+            }));
+
+        // Cambiar vista al banco del índice
+        guiActual.setOnCambiarBanco((InterfazGrafica.BancoIndexConsumer) idx ->
+            SwingUtilities.invokeLater(() -> {
+                if (idx < 0 || idx >= todasSims.size()) return;
+                guiActual.cambiarVistaBanco(todasSims.get(idx), todasEcos.get(idx));
+                guiActual.refrescarPanelLateral(new ArrayList<>(todasSims));
+            }));
+
+        guiActual.setOnObtenerIndiceBanco((InterfazGrafica.BancoIndexFunction) s -> todasSims.indexOf(s));
+
+        // Refrescar cubos
+        guiActual.setOnRefrescarCubos(() ->
+            SwingUtilities.invokeLater(() -> guiActual.refrescarPanelLateral(new ArrayList<>(todasSims))));
+
+        // No se usa (panel lateral reemplaza VentanaBancos)
+        guiActual.setOnAbrirBancos(() -> {});
+
+        // Comprar banco desde panel lateral
+        guiActual.setOnCompraBancoLateral(() -> SwingUtilities.invokeLater(() -> {
+            if (prestige.comprarBanco()) {
+                agregarNuevoBanco();
+                guiActual.mostrarToast("Nuevo banco comprado!", new Color(180, 120, 255));
+            } else {
+                guiActual.mostrarToast("Necesitas " + prestige.costoBanco() + " B.", new Color(180, 60, 60));
+            }
+        }));
+    }
+
+    private static void agregarNuevoBanco() {
         Economia eco = new Economia();
         SimulacionBanco sim = new SimulacionBanco(eco);
         sim.setPrestigio(prestige);
         todasSims.add(sim);
         todasEcos.add(eco);
+        // Sin GUI propia — se ve desde panel lateral
         sim.iniciar();
         if (guiActual != null)
             guiActual.refrescarPanelLateral(new ArrayList<>(todasSims));

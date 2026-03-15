@@ -23,6 +23,17 @@ public class SimulacionBanco {
     private volatile int ladronesAtrapados = 0;
     private volatile int ladronesRobaron   = 0;
 
+    // Mejora 1: nombres únicos por banco según índice global
+    private static final String[][] NOMBRES_CAJERO_POR_BANCO = {
+        {"Pata","Patito","Mano","Manita"},
+        {"Beto","Caro","Tito","Lina"},
+        {"Rolo","Pepe","Kike","Nena"},
+        {"Susi","Chalo","Gabi","Tono"},
+        {"Rafa","Vale","Cris","Dani"},
+    };
+    private static volatile int contadorBancos = 0;
+    private final int indiceBanco;
+
     private static final String[] NOMBRES_CAJERO =
         {"Pata","Patito","Mano","Manita","Beto","Caro","Tito","Lina"};
 
@@ -41,6 +52,7 @@ public class SimulacionBanco {
 
     public SimulacionBanco(Economia eco) {
         this.eco = eco;
+        this.indiceBanco = contadorBancos++;
         inicializarCajeros(eco.getMaxCajeros());
     }
 
@@ -60,9 +72,10 @@ public class SimulacionBanco {
 
     private void inicializarCajeros(int n) {
         int rapidoIdx = random.nextInt(n);
+        String[] nombres = NOMBRES_CAJERO_POR_BANCO[indiceBanco % NOMBRES_CAJERO_POR_BANCO.length];
         for (int i = 0; i < n; i++) {
             cajeros.add(new Cajero(
-                NOMBRES_CAJERO[i % NOMBRES_CAJERO.length],
+                nombres[i % nombres.length],
                 i == rapidoIdx, this, eco));
         }
     }
@@ -129,11 +142,11 @@ public class SimulacionBanco {
                         Cajero dst = abiertos.get(random.nextInt(abiertos.size()));
                         dst.agregarCliente(ladron);
                         ladronesActivos.add(ladron);
+                        SonidoManager.get().sonarLadronAparece();
 
-                        // Bug14: mostrar aviso solo la primera vez de cada prestige
-                        int presCount = (prestige != null) ? prestige.getPrestigios() : 0;
-                        if (prestigioEnQueSeAvisoLadron != presCount && gui != null) {
-                            prestigioEnQueSeAvisoLadron = presCount;
+                        // Mejora5: mostrar aviso solo UNA vez en toda la partida
+                        if (!ladronAvisadoGlobal && gui != null) {
+                            ladronAvisadoGlobal = true;
                             javax.swing.SwingUtilities.invokeLater(() -> gui.mostrarAvisoLadron());
                         }
                     }
@@ -200,6 +213,7 @@ public class SimulacionBanco {
         // No bajar de 0
         // usamos Economia directamente para descontar
         eco.descontarMonedas(robo);
+        SonidoManager.get().sonarLadronRoba();
         if (gui != null) {
             javax.swing.SwingUtilities.invokeLater(() ->
                 gui.mostrarRoboLadron((int)l.getX(), (int)l.getY(), robo));
@@ -283,10 +297,11 @@ public class SimulacionBanco {
 
     public synchronized void sincronizarCajeros() {
         int obj = eco.getMaxCajeros();
+        String[] nombres = NOMBRES_CAJERO_POR_BANCO[indiceBanco % NOMBRES_CAJERO_POR_BANCO.length];
         while (cajeros.size() < obj) {
             int idx = cajeros.size();
             Cajero c = new Cajero(
-                NOMBRES_CAJERO[idx % NOMBRES_CAJERO.length],
+                nombres[idx % nombres.length],
                 false, this, eco);
             cajeros.add(c);
             c.iniciar();
@@ -330,6 +345,8 @@ public class SimulacionBanco {
     }
 
     private void redirigirClienteConIntentos(Cliente cl, Cajero actual, int intentos) {
+        // Bug16: si es un ladrón atrapado/eliminado, descartarlo directamente
+        if (cl instanceof Ladron l && (l.isAtrapado() || l.isEliminado())) return;
         // Bug7: descartar cliente tras 20 intentos (~10s) para evitar zombies
         if (terminado || intentos > 20) return;
         List<Cajero> otros = getCajerosAbiertos().stream()
@@ -368,16 +385,25 @@ public class SimulacionBanco {
         if (gui != null) gui.ofrecerPrestigio();
     }
 
+    // Mejora 5: aviso de ladrón solo UNA vez en toda la partida
+    private static volatile boolean ladronAvisadoGlobal = false;
+
     /** Bug12: Al llegar a 200, ofrecer prestige pero NO detener el juego */
     private void alcanzarMeta() {
         if (metaAlcanzada) return;
         metaAlcanzada = true;
-        if (gui != null) gui.ofrecerPrestigio();
-        // El juego sigue: los cajeros siguen, llegan más clientes
+        // Bug17: pasar THIS para que la GUI sepa qué banco está prestigiando
+        if (gui != null) gui.ofrecerPrestigio(this);
+        // El juego sigue: cajeros y clientes continúan
     }
 
     /** Bug12: Botón de prestige manual (disponible después de alcanzar 200) */
     public boolean puedePrestigiarAhora() { return metaAlcanzada; }
+
+    /** Llamado cuando el jugador cambia a este banco y ya había alcanzado la meta sin GUI */
+    public void ofrecerPrestigioAhora() {
+        if (gui != null && metaAlcanzada && !terminado) gui.ofrecerPrestigio(this);
+    }
 
     public void prestigiarAhora() {
         if (!metaAlcanzada) return;

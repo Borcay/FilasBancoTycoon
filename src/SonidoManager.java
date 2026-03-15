@@ -13,8 +13,10 @@ public class SonidoManager {
     }
     private SonidoManager() {}  // constructor privado
 
-    private static final String ARCHIVO_ATENDIDO = "cliente_atendido.wav";
-    private static final String ARCHIVO_FIN      = "simulacion_fin.wav";
+    private static final String ARCHIVO_ATENDIDO     = "cliente_atendido.wav";
+    private static final String ARCHIVO_FIN          = "simulacion_fin.wav";
+    private static final String ARCHIVO_LADRON_LLEGA = "ladron_aparece.wav";
+    private static final String ARCHIVO_LADRON_ROBA  = "ladron_roba.wav";
 
     private static final String[] CANCIONES = {
         "Sunburst.wav",
@@ -115,6 +117,8 @@ public class SonidoManager {
 
     public void sonarClienteAtendido() { reproducirEfecto(ARCHIVO_ATENDIDO); }
     public void sonarFin()             { detenerMusicaFondo(); reproducirEfecto(ARCHIVO_FIN); }
+    public void sonarLadronAparece()   { reproducirEfecto(ARCHIVO_LADRON_LLEGA); }
+    public void sonarLadronRoba()      { reproducirEfecto(ARCHIVO_LADRON_ROBA); }
 
     // ── Getters para la UI ──
     public String getNombreCancionActual() {

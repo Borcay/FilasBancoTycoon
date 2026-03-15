@@ -95,6 +95,14 @@ public class InterfazGrafica extends JFrame {
         "Mas monedas por cliente",
         "Clientes VIP dan x2 monedas"
     };
+    // Descripción detallada que se muestra al hacer hover
+    private static final String[] UPG_EFECTOS = {
+        "+1 cajero activo (max 5 en total)",
+        "Intervalo entre clientes: 2.1s → 0.4s (-420ms por nivel)",
+        "Tiempo de atención: 4.0s → 0.9s (-720ms por nivel)",
+        "Monedas por cliente: $10 → $42 (+$8 por nivel)",
+        "Probabilidad VIP: +10% por nivel (max 30%)"
+    };
 
     // ── Reproductor ──
     private JLabel  lblCancion;
@@ -112,7 +120,7 @@ public class InterfazGrafica extends JFrame {
 
     // ── Panel lateral de bancos ──
     private JPanel panelLateralBancos;  // visible tras primer prestige
-    private SimulacionBanco simActual;  // banco que se está viendo ahora
+    private JScrollPane scrollBanco; // Bug19: referencia para redespachar rueda del mouse
     // ── Notificación de subida de nivel (ahora en glass pane) ──
     private volatile boolean mostrandoNotifNivel = false;
     private volatile int     notifNivel          = 0;
@@ -130,6 +138,26 @@ public class InterfazGrafica extends JFrame {
         construirUI();
         iniciarAnimacion();
         sonido.setOnCancionCambia(() -> SwingUtilities.invokeLater(this::actualizarReproductor));
+        registrarAtajosTeclado();
+    }
+
+    private void registrarAtajosTeclado() {
+        // 1-9 = bancos 1-9, 0 = banco 10
+        KeyboardFocusManager.getCurrentKeyboardFocusManager()
+            .addKeyEventDispatcher(e -> {
+                if (e.getID() != java.awt.event.KeyEvent.KEY_PRESSED) return false;
+                char c = e.getKeyChar();
+                if (c >= '1' && c <= '9') {
+                    int idx = c - '1'; // '1'->0, '2'->1, ...
+                    if (onCambiarBanco != null) onCambiarBanco.accept(idx);
+                    return true;
+                }
+                if (c == '0') {
+                    if (onCambiarBanco != null) onCambiarBanco.accept(9); // 0 = banco 10
+                    return true;
+                }
+                return false;
+            });
     }
 
     private void configurarVentana() {
@@ -157,7 +185,6 @@ public class InterfazGrafica extends JFrame {
 
         add(wrapper,              BorderLayout.CENTER);
         add(crearPanelInferior(), BorderLayout.SOUTH);
-        simActual = sim;
     }
 
     // ══════════════════════════════════════════════════
@@ -189,7 +216,7 @@ public class InterfazGrafica extends JFrame {
                 @Override protected void paintComponent(Graphics g) {
                     Graphics2D g2 = (Graphics2D) g;
                     g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                    boolean activo = (s == simActual);
+                    boolean activo = (s == sim);
                     Color bg = activo ? new Color(60, 100, 200)
                              : s.isTerminado() ? new Color(30, 100, 60)
                              : new Color(30, 40, 80);
@@ -213,6 +240,14 @@ public class InterfazGrafica extends JFrame {
                     double pct = Math.min(1.0, (double)s.getClientesAtendidosTotal()/s.getMetaClientes());
                     g2.setColor(s.isTerminado() ? new Color(80,200,120) : new Color(100,160,255));
                     g2.fillRoundRect(bx, by, (int)(bw*pct), bh, 3, 3);
+                    // Mejora6: indicador "P" morado si puede prestigiar
+                    if (s.isMetaAlcanzada() && !s.isTerminado()) {
+                        g2.setColor(new Color(180, 80, 255));
+                        g2.fillOval(getWidth()-14, 2, 12, 12);
+                        g2.setColor(Color.WHITE);
+                        g2.setFont(new Font("Segoe UI", Font.BOLD, 9));
+                        g2.drawString("P", getWidth()-10, 11);
+                    }
                 }
                 @Override public Dimension getPreferredSize() { return new Dimension(52, 52); }
                 @Override public Dimension getMaximumSize()   { return new Dimension(52, 52); }
@@ -291,27 +326,25 @@ public class InterfazGrafica extends JFrame {
 
     /** Cambia la vista al banco indicado (lo llama Main) */
     public void cambiarVistaBanco(SimulacionBanco nuevoSim, Economia nuevoEco) {
-        // Desconectar la GUI del banco anterior
         SimulacionBanco anterior = this.sim;
         if (anterior != null && anterior != nuevoSim) anterior.setGui(null);
 
-        // Reemplazar las referencias que usa toda la GUI
-        this.sim    = nuevoSim;
-        this.eco    = nuevoEco;
-        this.simActual = nuevoSim;
+        this.sim = nuevoSim;
+        this.eco = nuevoEco;
 
-        // Reconectar la GUI al nuevo banco
         nuevoSim.setGui(this);
 
-        // Limpiar posiciones animadas del banco anterior
         posiciones.clear();
         fadeOuts.clear();
         coinPopups.clear();
 
-        // Actualizar panel de mejoras con la economía del nuevo banco
         SwingUtilities.invokeLater(() -> {
             actualizarPanelInferior();
             mostrarToast("Viendo Banco " + (obtenerIndiceBanco(nuevoSim) + 1), new Color(100, 160, 255));
+            // Bug3: si el banco ya alcanzó la meta pero el diálogo no salió, mostrarlo ahora
+            if (nuevoSim.isMetaAlcanzada() && !nuevoSim.isTerminado()) {
+                nuevoSim.ofrecerPrestigioAhora();
+            }
         });
     }
 
@@ -568,12 +601,12 @@ public class InterfazGrafica extends JFrame {
         c.add(panelDayBar, BorderLayout.NORTH);
 
         panelBanco = new PanelBanco();
-        JScrollPane scroll = new JScrollPane(panelBanco,
+        scrollBanco = new JScrollPane(panelBanco,
             JScrollPane.VERTICAL_SCROLLBAR_AS_NEEDED,
             JScrollPane.HORIZONTAL_SCROLLBAR_NEVER);
-        scroll.setBorder(null);
-        scroll.getViewport().setBackground(C_FONDO);
-        c.add(scroll, BorderLayout.CENTER);
+        scrollBanco.setBorder(null);
+        scrollBanco.getViewport().setBackground(C_FONDO);
+        c.add(scrollBanco, BorderLayout.CENTER);
 
         // Bug11: instalar glass pane para dibujar notificación siempre visible
         JPanel glass = new JPanel(null) {
@@ -643,12 +676,10 @@ public class InterfazGrafica extends JFrame {
         };
         glass.addMouseListener(glassListener);
         glass.addMouseMotionListener(glassListener);
-        // Fix scroll: redespachar eventos de rueda al JScrollPane debajo
+        // Bug19: redespachar rueda directamente al scrollBanco
         glass.addMouseWheelListener(e -> {
-            Component dest = getContentPane().findComponentAt(e.getX(), e.getY());
-            if (dest != null && dest != glass) {
-                dest.dispatchEvent(SwingUtilities.convertMouseEvent(glass, e, dest));
-            }
+            if (scrollBanco != null)
+                scrollBanco.dispatchEvent(SwingUtilities.convertMouseEvent(glass, e, scrollBanco));
         });
         setGlassPane(glass);
         glass.setVisible(true);
@@ -695,7 +726,7 @@ public class InterfazGrafica extends JFrame {
         lblGanHoy      = mkStatBox(p, "Ganancias hoy",  "$0",    C_GOLD);
         lblMejorDia    = mkStatBox(p, "Mejor dia",      "$0",    new Color(48,96,192));
         lblNumCajeros  = mkStatBox(p, "Cajeros activos","1",     C_GREEN_UPG);
-        lblVelocidad   = mkStatBox(p, "Tiempo/cliente", "4.0s",  new Color(180,40,40));
+        lblVelocidad   = mkStatBox(p, "Tiempo atencion", "4.0s",  new Color(180,40,40));
         lblTiempoJuego = mkStatBox(p, "Tiempo total",   "00:00", new Color(80,80,160));
         return p;
     }
@@ -763,27 +794,32 @@ public class InterfazGrafica extends JFrame {
     private JPanel crearTarjeta(int idx) {
         JPanel card = new JPanel() {
             @Override protected void paintComponent(Graphics g) {
+                // NO llamar super — pintamos todo nosotros para controlar el fondo exacto
                 Graphics2D g2 = (Graphics2D)g;
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                // Fondo del contenedor padre para no dejar artefactos
+                g2.setColor(getParent() != null ? getParent().getBackground() : C_BOT_BG);
+                g2.fillRect(0, 0, getWidth(), getHeight());
+                // Rounded rect con el color de estado actual
                 g2.setColor(getBackground());
-                g2.fillRoundRect(0,0,getWidth(),getHeight(),10,10);
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
             }
             @Override protected void paintBorder(Graphics g) {
                 Graphics2D g2 = (Graphics2D)g;
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                boolean bloq   = esBloqueado(idx);
-                boolean maxed  = nivelMejora(idx) >= maxMejora(idx);
-                Color bc = maxed  ? new Color(100,200,140)
-                         : bloq   ? new Color(190,200,220)
-                         :          C_BOT_BORDER;
+                boolean bloq  = esBloqueado(idx);
+                boolean maxed = nivelMejora(idx) >= maxMejora(idx);
+                Color bc = maxed ? new Color(100,200,140)
+                         : bloq  ? new Color(190,200,220)
+                         :         C_BOT_BORDER;
                 g2.setColor(bc);
-                g2.drawRoundRect(0,0,getWidth()-1,getHeight()-1,10,10);
+                g2.drawRoundRect(0, 0, getWidth()-1, getHeight()-1, 10, 10);
             }
         };
         card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
         card.setPreferredSize(new Dimension(160, BOT_ALTO - 36));
-        card.setOpaque(false);
-        card.setBorder(new EmptyBorder(9,11,9,11));
+        card.setOpaque(false); // false para que nuestro paintComponent controle todo
+        card.setBorder(new EmptyBorder(9, 11, 9, 11));
 
         // Flag para saber si el mouse está encima
         boolean[] hovering = { false };
@@ -793,14 +829,15 @@ public class InterfazGrafica extends JFrame {
                 hovering[0] = true;
                 if (!esBloqueado(idx) && nivelMejora(idx) < maxMejora(idx))
                     card.setBackground(C_UPG_HOVER);
+                JLabel lEf = (JLabel) card.getClientProperty("lblEfecto");
+                if (lEf != null) lEf.setVisible(true);
             }
             @Override public void mouseExited(MouseEvent e) {
                 hovering[0] = false;
                 refrescarColorTarjeta(card, idx);
+                JLabel lEf = (JLabel) card.getClientProperty("lblEfecto");
+                if (lEf != null) lEf.setVisible(false);
             }
-            // Bug10: usar mousePressed en vez de mouseClicked
-            // mouseClicked requiere que press y release sean en el mismo pixel,
-            // lo cual falla si el JScrollPane absorbió el primer click
             @Override public void mousePressed(MouseEvent e) { onMejora(idx); }
         });
 
@@ -861,12 +898,21 @@ public class InterfazGrafica extends JFrame {
         card.add(top);
         card.add(Box.createVerticalStrut(4));
 
-        // Descripcion
+        // Descripcion base
         JLabel lDesc = new JLabel("<html><body style='width:130px'>" + UPG_DESCS[idx] + "</body></html>");
         lDesc.setFont(new Font("Segoe UI", Font.PLAIN, 10));
         lDesc.setForeground(bloq ? new Color(160,170,190) : new Color(80,112,160));
         lDesc.setAlignmentX(Component.LEFT_ALIGNMENT);
         card.add(lDesc);
+
+        // Efecto detallado — visible solo en hover
+        JLabel lEfecto = new JLabel("<html><body style='width:130px'>" + UPG_EFECTOS[idx] + "</body></html>");
+        lEfecto.setFont(new Font("Segoe UI", Font.ITALIC, 9));
+        lEfecto.setForeground(new Color(60, 130, 80));
+        lEfecto.setAlignmentX(Component.LEFT_ALIGNMENT);
+        lEfecto.setVisible(false);
+        card.putClientProperty("lblEfecto", lEfecto);
+        card.add(lEfecto);
 
         card.add(Box.createVerticalGlue());
 
@@ -1618,12 +1664,7 @@ public class InterfazGrafica extends JFrame {
             long rem = Math.max(0, (sim.getDuracionDia()-elapsed)/1000);
             g2.setFont(new Font("Segoe UI", Font.PLAIN, 11));
             g2.setColor(new Color(80,112,160));
-            g2.drawString(rem + "s", getWidth()-90, 21);
-
-            String meta = "Meta: " + sim.getClientesAtendidosTotal() + "/" + sim.getMetaClientes();
-            g2.setFont(new Font("Segoe UI", Font.PLAIN, 10));
-            FontMetrics fm = g2.getFontMetrics();
-            g2.drawString(meta, getWidth()-fm.stringWidth(meta)-6, 21);
+            g2.drawString(rem + "s", getWidth()-50, 21);
         }
     }
 
@@ -1632,27 +1673,32 @@ public class InterfazGrafica extends JFrame {
     // ══════════════════════════════════════════════════
 
     /** Llamado por SimulacionBanco cuando se llega a 200 clientes */
-    public void ofrecerPrestigio() {
+    public void ofrecerPrestigio(SimulacionBanco simQuePrestigia) {
         SwingUtilities.invokeLater(() -> {
-            PrestigioManager pr = sim.getPrestigio();
-            VentanaPrestigio vp = new VentanaPrestigio(this, pr, sim.getClientesAtendidosTotal());
+            PrestigioManager pr = simQuePrestigia.getPrestigio();
+            VentanaPrestigio vp = new VentanaPrestigio(this, pr, simQuePrestigia.getClientesAtendidosTotal());
             vp.setVisible(true);
 
             if (vp.getResultado() == VentanaPrestigio.Resultado.PRESTIGE) {
                 pr.agregarBilletes(pr.billetesDelPrestige());
                 pr.incrementarPrestigios();
                 activarUIPrestigio();
-                // Bug12: refrescar cubos tras prestige
                 if (onRefrescarCubos != null) onRefrescarCubos.run();
-                reiniciarSimulacion();
+                // Bug17: notificar a Main qué banco debe reiniciarse
+                if (onPrestigioConBanco != null) onPrestigioConBanco.accept(simQuePrestigia);
             } else {
-                // Bug12: CONTINUAR — el juego sigue sin límite, animTimer ya está corriendo
-                // El botón "Hacer Prestige ahora" aparece en el glass pane (mostrarBtnPrestige=true)
-                mostrarToast("Continuas jugando sin limite. Usa el boton para prestigiar cuando quieras.", new Color(60,120,220));
+                mostrarToast("Continuas jugando sin limite. Usa el boton de prestige cuando quieras.", new Color(60,120,220));
                 if (!animTimer.isRunning()) animTimer.start();
             }
         });
     }
+
+    // Mantener el método sin parámetro por compatibilidad con prestigiarAhora()
+    public void ofrecerPrestigio() { ofrecerPrestigio(sim); }
+
+    public interface SimConsumer { void accept(SimulacionBanco s); }
+    private SimConsumer onPrestigioConBanco;
+    public void setOnPrestigioConBanco(SimConsumer c) { onPrestigioConBanco = c; }
 
     private Runnable onRefrescarCubos;
     public void setOnRefrescarCubos(Runnable r) { onRefrescarCubos = r; }
@@ -1677,19 +1723,6 @@ public class InterfazGrafica extends JFrame {
     }
 
     /** Reinicia la simulación del banco actual para el nuevo prestige */
-    private void reiniciarSimulacion() {
-        animTimer.stop();
-        // La lógica de reinicio real está en Main a través de un callback
-        // Por ahora mostramos mensaje y cerramos/reabrimos
-        mostrarToast("Prestige realizado! +1 Billete. Reiniciando banco...", new Color(180,120,255));
-        // Esperar 2s y reiniciar via System.exit con flag — o notificar al Main
-        // Como Main es el orquestador, usamos un callback registrado
-        if (onPrestigio != null) onPrestigio.run();
-    }
-
-    private Runnable onPrestigio;
-    public void setOnPrestigio(Runnable r) { this.onPrestigio = r; }
-
     private void abrirArbolHabilidades() {
         PrestigioManager pr = sim.getPrestigio();
         if (pr == null) return;
