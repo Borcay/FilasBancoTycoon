@@ -35,10 +35,13 @@ public class SimulacionBanco {
     private final SonidoManager sonido;
 
     private volatile Thread hiloGenerador;
+    private PaseBatalla paseBatalla;
 
     public SimulacionBanco(Economia eco) {
         this.eco    = eco;
         this.sonido = new SonidoManager();
+        this.paseBatalla = new PaseBatalla(eco);
+        eco.setPaseBatalla(paseBatalla);
         inicializarCajeros(eco.getMaxCajeros());
     }
 
@@ -51,7 +54,14 @@ public class SimulacionBanco {
         }
     }
 
-    public void setGui(InterfazGrafica g) { this.gui = g; }
+    public void setGui(InterfazGrafica g) {
+        this.gui = g;
+        if (paseBatalla != null && g != null) {
+            paseBatalla.setOnSubirNivel(() ->
+                javax.swing.SwingUtilities.invokeLater(() -> g.notificarSubidaNivel(paseBatalla.getUltimoNivelSubido()))
+            );
+        }
+    }
 
     public void iniciar() {
         sonido.iniciarMusicaFondo();
@@ -136,6 +146,7 @@ public class SimulacionBanco {
                 ladronesAtrapados++;
                 // Recompensa por atrapar al ladrón
                 eco.agregarMonedas(RECOMPENSA_ATRAPA);
+                if (paseBatalla != null) paseBatalla.agregarXP(PaseBatalla.XP_LADRON_ATRAPADO);
                 if (gui != null) {
                     final int fx = (int)l.getX(), fy = (int)l.getY();
                     javax.swing.SwingUtilities.invokeLater(() ->
@@ -174,6 +185,7 @@ public class SimulacionBanco {
         if (!bonusMetaOtorgadoHoy && hoyAtendidos.get() >= eco.getClientesObjetivoDia()) {
             bonusMetaOtorgadoHoy = true;
             eco.otorgarBonusMeta();
+            if (paseBatalla != null) paseBatalla.agregarXP(PaseBatalla.XP_META_DIARIA);
             if (gui != null) {
                 javax.swing.SwingUtilities.invokeLater(() ->
                     gui.mostrarBonusMeta(eco.getBonusMetaDia()));
@@ -271,6 +283,9 @@ public class SimulacionBanco {
         hoyAtendidos.incrementAndGet();
         eco.agregarMonedas(eco.getMonedasPorCliente(cl.isVip()));
         sonido.sonarClienteAtendido();
+        // XP por cliente atendido
+        if (paseBatalla != null)
+            paseBatalla.agregarXP(cl.isVip() ? PaseBatalla.XP_CLIENTE_VIP : PaseBatalla.XP_CLIENTE_NORMAL);
 
         if (gui != null) {
             int cajIdx = cajeros.indexOf(caj);
@@ -319,4 +334,5 @@ public class SimulacionBanco {
     public SonidoManager getSonido()                  { return sonido; }
     public long getDuracionDia()                      { return DURACION_DIA; }
     public List<Ladron> getLadronesActivos()          { return ladronesActivos; }
+    public PaseBatalla  getPaseBatalla()              { return paseBatalla; }
 }

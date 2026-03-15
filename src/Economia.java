@@ -7,6 +7,11 @@ import java.util.concurrent.atomic.AtomicLong;
  */
 public class Economia {
 
+    // ── Pase de batalla ──
+    private PaseBatalla paseBatalla;
+    public void setPaseBatalla(PaseBatalla p) { this.paseBatalla = p; }
+    public PaseBatalla getPaseBatalla()       { return paseBatalla; }
+
     // ── Niveles máximos de cada mejora ──
     public static final int MAX_CAJEROS    = 4;   // niveles extra (total 1+4=5 cajeros)
     public static final int MAX_FLUJO      = 4;

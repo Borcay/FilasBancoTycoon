@@ -100,6 +100,17 @@ public class InterfazGrafica extends JFrame {
     private JLabel  lblCancion;
     private JButton btnPausa;
 
+    // ── Pase de Batalla ──
+    private JPanel  pnlXpIndicador;       // mini indicador clickeable en header
+    private JLabel  lblXpNivel;           // "Nv. 5"
+    private JLabel  lblXpProgress;        // "320 / 550 XP"
+    // Notificación de subida de nivel (overlay en pantalla principal)
+    private volatile boolean mostrandoNotifNivel = false;
+    private volatile int     notifNivel          = 0;
+    private volatile float   notifAlpha          = 0f;
+    private volatile boolean notifSubiendo       = true;
+    private volatile long    notifInicioMs       = 0;
+
     public InterfazGrafica(SimulacionBanco sim, Economia eco) {
         this.sim    = sim;
         this.eco    = eco;
@@ -200,9 +211,79 @@ public class InterfazGrafica extends JFrame {
         centroMon.add(monLbl);
         centroMon.add(lblMonedasHeader);
 
-        JPanel centroWrap = new JPanel(new GridBagLayout());
+        // ── Mini indicador XP (amarillo-naranja, al lado de monedas) ──
+        pnlXpIndicador = new JPanel() {
+            @Override protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D)g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                int w = getWidth(), h = getHeight();
+
+                // Sombra exterior
+                g2.setColor(new Color(0,0,0,60));
+                g2.fillRoundRect(3, 3, w-2, h-2, 14, 14);
+
+                // Fondo degradado amarillo-naranja
+                GradientPaint gpx = new GradientPaint(0, 0, new Color(255, 160, 20), w, h, new Color(220, 80, 0));
+                g2.setPaint(gpx);
+                g2.fillRoundRect(0, 0, w-1, h-1, 14, 14);
+
+                // Brillo superior
+                g2.setColor(new Color(255,255,255,55));
+                g2.fillRoundRect(4, 4, w-8, h/2-4, 10, 10);
+
+                // Borde dorado
+                g2.setColor(new Color(255, 220, 80, 200));
+                g2.setStroke(new BasicStroke(1.8f));
+                g2.drawRoundRect(1, 1, w-3, h-3, 13, 13);
+                g2.setStroke(new BasicStroke(1f));
+
+                // Ícono espada
+                g2.setFont(new Font("Segoe UI Emoji", Font.PLAIN, 18));
+                g2.setColor(new Color(255, 240, 120));
+                g2.drawString("⚔", 8, h/2 + 6);
+
+                // Barra XP
+                PaseBatalla pb = sim.getPaseBatalla();
+                if (pb != null && !pb.esNivelMax()) {
+                    long xpA = pb.getXpEnNivelActual(), xpN = pb.getXpParaSiguiente();
+                    double prog = xpN > 0 ? (double)xpA/xpN : 1.0;
+                    int bx=8, by=h-10, bw=w-16, bh=6;
+                    g2.setColor(new Color(0,0,0,60));
+                    g2.fillRoundRect(bx, by, bw, bh, 4, 4);
+                    g2.setColor(new Color(255,255,255,200));
+                    g2.fillRoundRect(bx, by, (int)(bw*prog), bh, 4, 4);
+                    g2.setColor(new Color(0,0,0,40));
+                    g2.drawRoundRect(bx, by, bw, bh, 4, 4);
+                }
+            }
+        };
+        pnlXpIndicador.setLayout(null);
+        pnlXpIndicador.setOpaque(false);
+        pnlXpIndicador.setPreferredSize(new Dimension(160, 58));
+        pnlXpIndicador.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        pnlXpIndicador.setToolTipText("Ver Pase de Batalla");
+
+        lblXpNivel = new JLabel("NIVEL 1");
+        lblXpNivel.setFont(new Font("Segoe UI", Font.BOLD, 15));
+        lblXpNivel.setForeground(new Color(255, 250, 200));
+        lblXpNivel.setBounds(32, 8, 120, 20);
+
+        lblXpProgress = new JLabel("0 / 100 XP");
+        lblXpProgress.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        lblXpProgress.setForeground(new Color(255, 240, 180));
+        lblXpProgress.setBounds(32, 26, 120, 16);
+
+        pnlXpIndicador.add(lblXpNivel);
+        pnlXpIndicador.add(lblXpProgress);
+        pnlXpIndicador.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) { abrirVentanaPaseBatalla(false); }
+        });
+
+        // Centrar ambos cuadros (monedas + XP) juntos
+        JPanel centroWrap = new JPanel(new FlowLayout(FlowLayout.CENTER, 14, 6));
         centroWrap.setOpaque(false);
         centroWrap.add(centroMon);
+        centroWrap.add(pnlXpIndicador);
         p.add(centroWrap, BorderLayout.CENTER);
 
         // Derecha: timer + leyenda
@@ -635,6 +716,7 @@ public class InterfazGrafica extends JFrame {
             actualizarCoinPopups();
             actualizarToasts();
             actualizarHUD();
+            actualizarNotifNivel();
             // Refrescar colores de mejoras cada tick (refleja cambios de monedas)
             if (panelesMejora != null)
                 for (int i = 0; i < 5; i++) refrescarColorTarjeta(panelesMejora[i], i);
@@ -657,6 +739,52 @@ public class InterfazGrafica extends JFrame {
         lblNumCajeros.setText(String.valueOf(sim.getCajeros().size()));
         lblVelocidad.setText(String.format("%.1fs", eco.getServeBaseMs()/1000.0));
         if (lblTiempoJuego != null) lblTiempoJuego.setText(tiempoStr);
+        // Actualizar mini indicador XP
+        PaseBatalla pb = sim.getPaseBatalla();
+        if (pb != null && lblXpNivel != null) {
+            lblXpNivel.setText("NIVEL " + pb.getNivel() + (pb.esNivelMax() ? "  ★ MAX" : ""));
+            if (pb.esNivelMax()) {
+                lblXpProgress.setText("¡Nivel Máximo!");
+            } else {
+                lblXpProgress.setText(pb.getXpEnNivelActual() + " / " + pb.getXpParaSiguiente() + " XP");
+            }
+            if (pnlXpIndicador != null) pnlXpIndicador.repaint();
+        }
+    }
+
+    private void actualizarNotifNivel() {
+        if (!mostrandoNotifNivel) return;
+        long elapsed = System.currentTimeMillis() - notifInicioMs;
+        if (notifSubiendo) {
+            notifAlpha = Math.min(1f, notifAlpha + 0.05f);
+            if (notifAlpha >= 1f) notifSubiendo = false;
+        } else if (elapsed > 4000) {
+            notifAlpha = Math.max(0f, notifAlpha - 0.04f);
+            if (notifAlpha <= 0f) mostrandoNotifNivel = false;
+        }
+        panelBanco.repaint();
+    }
+
+    /** Llamado por SimulacionBanco cuando el jugador sube de nivel */
+    public void notificarSubidaNivel(int nuevoNivel) {
+        notifNivel        = nuevoNivel;
+        notifAlpha        = 0f;
+        notifSubiendo     = true;
+        mostrandoNotifNivel = true;
+        notifInicioMs     = System.currentTimeMillis();
+    }
+
+    private void abrirVentanaPaseBatalla(boolean conAnimacion) {
+        PaseBatalla pb = sim.getPaseBatalla();
+        if (pb == null) return;
+        mostrandoNotifNivel = false; // cerrar notif al abrir la ventana
+        VentanaPaseBatalla v = new VentanaPaseBatalla(this, pb, conAnimacion);
+        v.addMouseListener(new MouseAdapter() {
+            @Override public void mouseClicked(MouseEvent e) {
+                if (v.animandoSubida) v.cerrarAnimacion();
+            }
+        });
+        v.setVisible(true);
     }
 
     private void actualizarPosicionesClientes() {
@@ -826,6 +954,16 @@ public class InterfazGrafica extends JFrame {
             setBackground(C_FONDO);
             addMouseListener(new MouseAdapter() {
                 @Override public void mouseClicked(MouseEvent e) {
+                    // Click en notificación de nivel -> abrir pase de batalla con animación
+                    if (mostrandoNotifNivel && notifAlpha > 0.1f) {
+                        int nw = 340, nh = 90;
+                        int nx = getWidth() - nw - 16, ny = 16;
+                        if (e.getX() >= nx && e.getX() <= nx + nw &&
+                            e.getY() >= ny && e.getY() <= ny + nh) {
+                            abrirVentanaPaseBatalla(true);
+                            return;
+                        }
+                    }
                     sim.intentarAtraparLadron(e.getX(), e.getY());
                 }
             });
@@ -938,6 +1076,62 @@ public class InterfazGrafica extends JFrame {
                 String t2 = textOverlay2;
                 g2.setColor(new Color(180,210,255));
                 g2.drawString(t2, (getWidth()-fm.stringWidth(t2))/2, cy + 36);
+
+                g2.setComposite(AlphaComposite.SrcOver);
+            }
+
+            // ── Notificación de subida de nivel ──
+            if (mostrandoNotifNivel && notifAlpha > 0) {
+                float a = notifAlpha;
+                int nw = 340, nh = 90;
+                int nx = getWidth() - nw - 16;
+                int ny = 16;
+
+                // Sombra
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a * 0.4f));
+                g2.setColor(Color.BLACK);
+                g2.fillRoundRect(nx + 4, ny + 4, nw, nh, 16, 16);
+
+                // Fondo oscuro con borde azul
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a * 0.95f));
+                g2.setColor(new Color(15, 25, 55));
+                g2.fillRoundRect(nx, ny, nw, nh, 16, 16);
+                g2.setColor(new Color(30, 120, 255));
+                g2.setStroke(new BasicStroke(2.5f));
+                g2.drawRoundRect(nx, ny, nw, nh, 16, 16);
+                g2.setStroke(new BasicStroke(1f));
+
+                // Franja lateral dorada
+                g2.setColor(new Color(255, 200, 50));
+                g2.fillRoundRect(nx, ny, 6, nh, 6, 6);
+
+                // Icono y texto
+                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a));
+                g2.setFont(new Font("Segoe UI", Font.BOLD, 11));
+                g2.setColor(new Color(80, 170, 255));
+                g2.drawString("PASE DE BATALLA", nx + 18, ny + 20);
+
+                g2.setFont(new Font("Segoe UI", Font.BOLD, 20));
+                g2.setColor(new Color(255, 200, 50));
+                g2.drawString("¡Subiste al Nivel " + notifNivel + "!", nx + 18, ny + 46);
+
+                // Recompensa
+                PaseBatalla pb = sim.getPaseBatalla();
+                if (pb != null) {
+                    PaseBatalla.Recompensa r = pb.getRecompensa(notifNivel);
+                    if (r != null) {
+                        g2.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+                        g2.setColor(new Color(200, 255, 200));
+                        g2.drawString("🎁 " + r.descripcion, nx + 18, ny + 66);
+                    }
+                }
+
+                // Botón "Ver" 
+                g2.setColor(new Color(30, 120, 255, 200));
+                g2.fillRoundRect(nx + nw - 68, ny + nh - 30, 58, 20, 8, 8);
+                g2.setFont(new Font("Segoe UI", Font.BOLD, 11));
+                g2.setColor(Color.WHITE);
+                g2.drawString("Ver →", nx + nw - 56, ny + nh - 16);
 
                 g2.setComposite(AlphaComposite.SrcOver);
             }
