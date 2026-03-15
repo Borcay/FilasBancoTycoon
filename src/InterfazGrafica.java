@@ -50,8 +50,8 @@ public class InterfazGrafica extends JFrame {
     private static final int PAD        = 14;
     private static final double LERP    = 0.14;
 
-    private final SimulacionBanco sim;
-    private final Economia eco;
+    private SimulacionBanco sim;
+    private Economia eco;
     private final SonidoManager sonido;
 
     // ── Animación de clientes ──
@@ -106,15 +106,21 @@ public class InterfazGrafica extends JFrame {
     private JLabel  lblXpProgress;
 
     // ── Prestige ──
-    private JLabel  lblBilletes;          // muestra billetes en header
-    private JButton btnBancos;            // visible solo tras primer prestige
-    private VentanaBancos ventanaBancos;  // instancia actual de la ventana de bancos
-    // Notificación de subida de nivel (overlay en pantalla principal)
+    private JLabel  lblBilletes;
+    private JButton btnBancos;
+    private VentanaBancos ventanaBancos;
+
+    // ── Panel lateral de bancos ──
+    private JPanel panelLateralBancos;  // visible tras primer prestige
+    private SimulacionBanco simActual;  // banco que se está viendo ahora
+    // ── Notificación de subida de nivel (ahora en glass pane) ──
     private volatile boolean mostrandoNotifNivel = false;
     private volatile int     notifNivel          = 0;
     private volatile float   notifAlpha          = 0f;
     private volatile boolean notifSubiendo       = true;
     private volatile long    notifInicioMs       = 0;
+    // Bug12: botón de prestige manual visible tras alcanzar meta
+    private volatile boolean mostrarBtnPrestige  = false;
 
     public InterfazGrafica(SimulacionBanco sim, Economia eco) {
         this.sim    = sim;
@@ -140,9 +146,178 @@ public class InterfazGrafica extends JFrame {
     // ══════════════════════════════════════════════════
     private void construirUI() {
         setLayout(new BorderLayout());
-        add(crearHeader(),         BorderLayout.NORTH);
-        add(crearCentro(),         BorderLayout.CENTER);
-        add(crearPanelInferior(),  BorderLayout.SOUTH);
+        add(crearHeader(),        BorderLayout.NORTH);
+
+        // Wrapper central: panel lateral (oculto inicialmente) + contenido del banco
+        JPanel wrapper = new JPanel(new BorderLayout());
+        panelLateralBancos = crearPanelLateral();
+        panelLateralBancos.setVisible(false);
+        wrapper.add(panelLateralBancos, BorderLayout.WEST);
+        wrapper.add(crearCentro(),      BorderLayout.CENTER);
+
+        add(wrapper,              BorderLayout.CENTER);
+        add(crearPanelInferior(), BorderLayout.SOUTH);
+        simActual = sim;
+    }
+
+    // ══════════════════════════════════════════════════
+    //  PANEL LATERAL DE BANCOS
+    // ══════════════════════════════════════════════════
+    private JPanel crearPanelLateral() {
+        JPanel p = new JPanel() {
+            @Override protected void paintComponent(Graphics g) {
+                g.setColor(new Color(14, 20, 50));
+                g.fillRect(0, 0, getWidth(), getHeight());
+            }
+        };
+        p.setLayout(new BoxLayout(p, BoxLayout.Y_AXIS));
+        p.setPreferredSize(new Dimension(72, 0));
+        p.setBorder(BorderFactory.createMatteBorder(0, 0, 0, 1, new Color(50, 70, 130)));
+        return p;
+    }
+
+    /** Reconstruye los cubos del panel lateral con la lista actual de bancos */
+    public void refrescarPanelLateral(java.util.List<SimulacionBanco> sims) {
+        if (panelLateralBancos == null) return;
+        panelLateralBancos.removeAll();
+        panelLateralBancos.add(Box.createVerticalStrut(10));
+
+        for (int i = 0; i < sims.size(); i++) {
+            final SimulacionBanco s = sims.get(i);
+            final int idx = i;
+            JPanel cubo = new JPanel() {
+                @Override protected void paintComponent(Graphics g) {
+                    Graphics2D g2 = (Graphics2D) g;
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    boolean activo = (s == simActual);
+                    Color bg = activo ? new Color(60, 100, 200)
+                             : s.isTerminado() ? new Color(30, 100, 60)
+                             : new Color(30, 40, 80);
+                    Color border = activo ? new Color(140, 180, 255)
+                                 : s.isTerminado() ? new Color(80, 200, 120)
+                                 : new Color(60, 80, 140);
+                    g2.setColor(bg);
+                    g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
+                    g2.setColor(border);
+                    g2.setStroke(new BasicStroke(activo ? 2.5f : 1.5f));
+                    g2.drawRoundRect(1, 1, getWidth()-2, getHeight()-2, 10, 10);
+                    g2.setStroke(new BasicStroke(1f));
+                    g2.setFont(new Font("Segoe UI", Font.BOLD, 13));
+                    g2.setColor(Color.WHITE);
+                    String n = String.valueOf(idx + 1);
+                    FontMetrics fm = g2.getFontMetrics();
+                    g2.drawString(n, (getWidth()-fm.stringWidth(n))/2, getHeight()/2 - 2);
+                    int bx = 4, bw = getWidth()-8, bh = 4, by = getHeight()-8;
+                    g2.setColor(new Color(255,255,255,40));
+                    g2.fillRoundRect(bx, by, bw, bh, 3, 3);
+                    double pct = Math.min(1.0, (double)s.getClientesAtendidosTotal()/s.getMetaClientes());
+                    g2.setColor(s.isTerminado() ? new Color(80,200,120) : new Color(100,160,255));
+                    g2.fillRoundRect(bx, by, (int)(bw*pct), bh, 3, 3);
+                }
+                @Override public Dimension getPreferredSize() { return new Dimension(52, 52); }
+                @Override public Dimension getMaximumSize()   { return new Dimension(52, 52); }
+            };
+            cubo.setOpaque(false);
+            cubo.setAlignmentX(Component.CENTER_ALIGNMENT);
+            cubo.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            // Sin tooltip
+            cubo.addMouseListener(new MouseAdapter() {
+                @Override public void mouseClicked(MouseEvent e) {
+                    if (onCambiarBanco != null) onCambiarBanco.accept(idx);
+                }
+            });
+            panelLateralBancos.add(cubo);
+            panelLateralBancos.add(Box.createVerticalStrut(8));
+        }
+
+        // Separador
+        panelLateralBancos.add(Box.createVerticalGlue());
+
+        // Botón comprar banco
+        PrestigioManager pr = sim.getPrestigio();
+        if (pr != null) {
+            JPanel btnComprar = new JPanel() {
+                @Override protected void paintComponent(Graphics g) {
+                    Graphics2D g2 = (Graphics2D) g;
+                    g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                    boolean puedeComprar = pr.getBilletes() >= pr.costoBanco();
+                    g2.setColor(puedeComprar ? new Color(60, 30, 120) : new Color(30, 30, 50));
+                    g2.fillRoundRect(0, 0, getWidth(), getHeight(), 8, 8);
+                    g2.setColor(puedeComprar ? new Color(160, 100, 255) : new Color(60, 60, 90));
+                    g2.setStroke(new BasicStroke(1.5f));
+                    g2.drawRoundRect(1, 1, getWidth()-2, getHeight()-2, 8, 8);
+                    g2.setStroke(new BasicStroke(1f));
+                    g2.setFont(new Font("Segoe UI", Font.BOLD, 11));
+                    g2.setColor(puedeComprar ? Color.WHITE : new Color(100, 100, 130));
+                    String l1 = "+";
+                    String l2 = pr.costoBanco() + "B";
+                    FontMetrics fm = g2.getFontMetrics();
+                    g2.drawString(l1, (getWidth()-fm.stringWidth(l1))/2, getHeight()/2 - 3);
+                    g2.setFont(new Font("Segoe UI", Font.PLAIN, 9));
+                    fm = g2.getFontMetrics();
+                    g2.drawString(l2, (getWidth()-fm.stringWidth(l2))/2, getHeight()/2 + 10);
+                }
+                @Override public Dimension getPreferredSize() { return new Dimension(52, 44); }
+                @Override public Dimension getMaximumSize()   { return new Dimension(52, 44); }
+            };
+            btnComprar.setOpaque(false);
+            btnComprar.setAlignmentX(Component.CENTER_ALIGNMENT);
+            btnComprar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+            btnComprar.addMouseListener(new MouseAdapter() {
+                @Override public void mouseClicked(MouseEvent e) {
+                    if (onCompraBancoLateral != null) onCompraBancoLateral.run();
+                }
+            });
+            panelLateralBancos.add(btnComprar);
+            panelLateralBancos.add(Box.createVerticalStrut(8));
+        }
+
+        panelLateralBancos.revalidate();
+        panelLateralBancos.repaint();
+    }
+
+    private Runnable onCompraBancoLateral;
+    public void setOnCompraBancoLateral(Runnable r) { onCompraBancoLateral = r; }
+
+    // Interfaces simples para evitar dependencia de java.util.function
+    public interface BancoIndexConsumer { void accept(int idx); }
+    public interface BancoIndexFunction  { int apply(SimulacionBanco s); }
+
+    private BancoIndexConsumer onCambiarBanco;
+    public void setOnCambiarBanco(BancoIndexConsumer c) { onCambiarBanco = c; }
+
+    private BancoIndexFunction onObtenerIndiceBanco;
+    public void setOnObtenerIndiceBanco(BancoIndexFunction f) { onObtenerIndiceBanco = f; }
+
+    /** Cambia la vista al banco indicado (lo llama Main) */
+    public void cambiarVistaBanco(SimulacionBanco nuevoSim, Economia nuevoEco) {
+        // Desconectar la GUI del banco anterior
+        SimulacionBanco anterior = this.sim;
+        if (anterior != null && anterior != nuevoSim) anterior.setGui(null);
+
+        // Reemplazar las referencias que usa toda la GUI
+        this.sim    = nuevoSim;
+        this.eco    = nuevoEco;
+        this.simActual = nuevoSim;
+
+        // Reconectar la GUI al nuevo banco
+        nuevoSim.setGui(this);
+
+        // Limpiar posiciones animadas del banco anterior
+        posiciones.clear();
+        fadeOuts.clear();
+        coinPopups.clear();
+
+        // Actualizar panel de mejoras con la economía del nuevo banco
+        SwingUtilities.invokeLater(() -> {
+            actualizarPanelInferior();
+            mostrarToast("Viendo Banco " + (obtenerIndiceBanco(nuevoSim) + 1), new Color(100, 160, 255));
+        });
+    }
+
+    private int obtenerIndiceBanco(SimulacionBanco s) {
+        if (onObtenerIndiceBanco != null) return onObtenerIndiceBanco.apply(s);
+        return 0;
     }
 
     // ── HEADER ──
@@ -266,7 +441,6 @@ public class InterfazGrafica extends JFrame {
         pnlXpIndicador.setOpaque(false);
         pnlXpIndicador.setPreferredSize(new Dimension(160, 58));
         pnlXpIndicador.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        pnlXpIndicador.setToolTipText("Ver Pase de Batalla");
 
         lblXpNivel = new JLabel("NIVEL 1");
         lblXpNivel.setFont(new Font("Segoe UI", Font.BOLD, 15));
@@ -314,7 +488,6 @@ public class InterfazGrafica extends JFrame {
         lblBilletes.setForeground(new Color(210, 150, 255));
         lblBilletes.setAlignmentX(Component.CENTER_ALIGNMENT);
         lblBilletes.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
-        lblBilletes.setToolTipText("Ver arbol de habilidades");
         lblBilletes.addMouseListener(new MouseAdapter() {
             @Override public void mouseClicked(MouseEvent e) { abrirArbolHabilidades(); }
         });
@@ -330,7 +503,8 @@ public class InterfazGrafica extends JFrame {
         p.putClientProperty("centroWrap", centroWrap);
         p.add(centroWrap, BorderLayout.CENTER);
 
-        // Derecha: timer + leyenda + botón bancos
+        // Derecha: timer + botón bancos
+
         JPanel der = new JPanel();
         der.setLayout(new BoxLayout(der, BoxLayout.Y_AXIS));
         der.setOpaque(false);
@@ -357,14 +531,6 @@ public class InterfazGrafica extends JFrame {
         der.add(btnBancos);
 
         der.add(Box.createVerticalStrut(4));
-
-        JPanel leyenda = new JPanel(new FlowLayout(FlowLayout.RIGHT, 8, 0));
-        leyenda.setOpaque(false);
-        leyenda.add(dotLeyenda(C_CAJERO_OPEN,  "Abierto"));
-        leyenda.add(dotLeyenda(C_CAJERO_CLOSE, "Cerrado"));
-        leyenda.add(dotLeyenda(C_CAJERO_FAST,  "Rapido"));
-        leyenda.add(dotLeyenda(C_CLIENTE_VIP,  "VIP"));
-        der.add(leyenda);
 
         p.add(der, BorderLayout.EAST);
         return p;
@@ -408,6 +574,84 @@ public class InterfazGrafica extends JFrame {
         scroll.setBorder(null);
         scroll.getViewport().setBackground(C_FONDO);
         c.add(scroll, BorderLayout.CENTER);
+
+        // Bug11: instalar glass pane para dibujar notificación siempre visible
+        JPanel glass = new JPanel(null) {
+            @Override protected void paintComponent(Graphics g) {
+                // Solo dibujamos la notif de nivel (y el botón de prestige manual)
+                if ((!mostrandoNotifNivel || notifAlpha <= 0) && !mostrarBtnPrestige) return;
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
+                if (mostrandoNotifNivel && notifAlpha > 0) dibujarNotifNivel(g2, getWidth(), getHeight());
+                if (mostrarBtnPrestige) dibujarBotonPrestige(g2, getWidth(), getHeight());
+            }
+        };
+        glass.setOpaque(false);
+
+        // CRÍTICO: el glass pane solo consume clicks que caen sobre sus propias zonas activas.
+        // Todo lo demás se redespecha al componente que hay debajo.
+        MouseAdapter glassListener = new MouseAdapter() {
+            private boolean enZonaActiva(MouseEvent e) {
+                int x = e.getX(), y = e.getY();
+                if (mostrarBtnPrestige) {
+                    int bw = 190, bh = 36;
+                    int bx = glass.getWidth() - bw - 16;
+                    int by = glass.getHeight() - bh - 16;
+                    if (x >= bx && x <= bx+bw && y >= by && y <= by+bh) return true;
+                }
+                if (mostrandoNotifNivel && notifAlpha > 0.1f) {
+                    int nw = 340, nh = 90;
+                    int nx = glass.getWidth() - nw - 16, ny = 16;
+                    if (x >= nx && x <= nx+nw && y >= ny && y <= ny+nh) return true;
+                }
+                return false;
+            }
+
+            private void redespacher(MouseEvent e) {
+                if (enZonaActiva(e)) return; // consumir
+                // Pasar el evento al componente real debajo del glass pane
+                Component dest = getContentPane().findComponentAt(e.getX(), e.getY());
+                if (dest != null && dest != glass) {
+                    dest.dispatchEvent(SwingUtilities.convertMouseEvent(glass, e, dest));
+                }
+            }
+
+            @Override public void mouseClicked(MouseEvent e) {
+                if (!enZonaActiva(e)) { redespacher(e); return; }
+                int x = e.getX(), y = e.getY();
+                if (mostrarBtnPrestige) {
+                    int bw = 190, bh = 36;
+                    int bx = glass.getWidth() - bw - 16;
+                    int by = glass.getHeight() - bh - 16;
+                    if (x >= bx && x <= bx+bw && y >= by && y <= by+bh) {
+                        sim.prestigiarAhora(); return;
+                    }
+                }
+                if (mostrandoNotifNivel && notifAlpha > 0.1f) {
+                    int nw = 340, nh = 90;
+                    int nx = glass.getWidth() - nw - 16, ny = 16;
+                    if (x >= nx && x <= nx+nw && y >= ny && y <= ny+nh) {
+                        abrirVentanaPaseBatalla(true);
+                    }
+                }
+            }
+            @Override public void mousePressed(MouseEvent e)  { redespacher(e); }
+            @Override public void mouseReleased(MouseEvent e) { redespacher(e); }
+            @Override public void mouseMoved(MouseEvent e)    { redespacher(e); }
+            @Override public void mouseDragged(MouseEvent e)  { redespacher(e); }
+        };
+        glass.addMouseListener(glassListener);
+        glass.addMouseMotionListener(glassListener);
+        // Fix scroll: redespachar eventos de rueda al JScrollPane debajo
+        glass.addMouseWheelListener(e -> {
+            Component dest = getContentPane().findComponentAt(e.getX(), e.getY());
+            if (dest != null && dest != glass) {
+                dest.dispatchEvent(SwingUtilities.convertMouseEvent(glass, e, dest));
+            }
+        });
+        setGlassPane(glass);
+        glass.setVisible(true);
         return c;
     }
 
@@ -554,7 +798,10 @@ public class InterfazGrafica extends JFrame {
                 hovering[0] = false;
                 refrescarColorTarjeta(card, idx);
             }
-            @Override public void mouseClicked(MouseEvent e) { onMejora(idx); }
+            // Bug10: usar mousePressed en vez de mouseClicked
+            // mouseClicked requiere que press y release sean en el mismo pixel,
+            // lo cual falla si el JScrollPane absorbió el primer click
+            @Override public void mousePressed(MouseEvent e) { onMejora(idx); }
         });
 
         // Guardar referencia al flag en el panel para que refrescarColorTarjeta lo respete
@@ -801,11 +1048,17 @@ public class InterfazGrafica extends JFrame {
             actualizarToasts();
             actualizarHUD();
             actualizarNotifNivel();
-            // Refrescar colores de mejoras cada tick (refleja cambios de monedas)
+            // Bug12: mostrar botón de prestige cuando se alcanza la meta
+            mostrarBtnPrestige = sim.isMetaAlcanzada() && !sim.isTerminado();
             if (panelesMejora != null)
                 for (int i = 0; i < 5; i++) refrescarColorTarjeta(panelesMejora[i], i);
             panelBanco.repaint();
             panelDayBar.repaint();
+            // Bug11: repintar glass pane para notif siempre visible
+            if (getGlassPane() != null) getGlassPane().repaint();
+            // Refrescar cubos del panel lateral
+            if (panelLateralBancos != null && panelLateralBancos.isVisible())
+                panelLateralBancos.repaint();
         });
         animTimer.start();
     }
@@ -843,24 +1096,30 @@ public class InterfazGrafica extends JFrame {
 
     private void actualizarNotifNivel() {
         if (!mostrandoNotifNivel) return;
-        long elapsed = System.currentTimeMillis() - notifInicioMs;
         if (notifSubiendo) {
             notifAlpha = Math.min(1f, notifAlpha + 0.05f);
-            if (notifAlpha >= 1f) notifSubiendo = false;
-        } else if (elapsed > 4000) {
-            notifAlpha = Math.max(0f, notifAlpha - 0.04f);
-            if (notifAlpha <= 0f) mostrandoNotifNivel = false;
+            if (notifAlpha >= 1f) {
+                notifSubiendo = false;
+                notifInicioMs = System.currentTimeMillis(); // empezar a contar desde aquí
+            }
+        } else {
+            long elapsed = System.currentTimeMillis() - notifInicioMs;
+            if (elapsed > 4000) {
+                notifAlpha = Math.max(0f, notifAlpha - 0.04f);
+                if (notifAlpha <= 0f) mostrandoNotifNivel = false;
+            }
         }
-        panelBanco.repaint();
+        // La notif se dibuja en el glass pane, que ya se repinta en el animTimer
     }
 
-    /** Llamado por SimulacionBanco cuando el jugador sube de nivel */
     public void notificarSubidaNivel(int nuevoNivel) {
-        notifNivel        = nuevoNivel;
-        notifAlpha        = 0f;
-        notifSubiendo     = true;
-        mostrandoNotifNivel = true;
-        notifInicioMs     = System.currentTimeMillis();
+        javax.swing.SwingUtilities.invokeLater(() -> {
+            notifNivel          = nuevoNivel;
+            notifAlpha          = 0f;
+            notifSubiendo       = true;
+            mostrandoNotifNivel = true;
+            notifInicioMs       = System.currentTimeMillis();
+        });
     }
 
     private void abrirVentanaPaseBatalla(boolean conAnimacion) {
@@ -1043,18 +1302,7 @@ public class InterfazGrafica extends JFrame {
             setBackground(C_FONDO);
             addMouseListener(new MouseAdapter() {
                 @Override public void mouseClicked(MouseEvent e) {
-                    // Click en notificación de nivel -> abrir pase de batalla con animación
-                    if (mostrandoNotifNivel && notifAlpha > 0.1f) {
-                        int nw = 340, nh = 90;
-                        int nx = getWidth() - nw - 16, ny = 16;
-                        if (e.getX() >= nx && e.getX() <= nx + nw &&
-                            e.getY() >= ny && e.getY() <= ny + nh) {
-                            abrirVentanaPaseBatalla(true);
-                            return;
-                        }
-                    }
                     sim.intentarAtraparLadron(e.getX(), e.getY());
-                    // Atención manual si la habilidad está desbloqueada
                     sim.atenderManual(e.getX(), e.getY());
                 }
             });
@@ -1167,62 +1415,6 @@ public class InterfazGrafica extends JFrame {
                 String t2 = textOverlay2;
                 g2.setColor(new Color(180,210,255));
                 g2.drawString(t2, (getWidth()-fm.stringWidth(t2))/2, cy + 36);
-
-                g2.setComposite(AlphaComposite.SrcOver);
-            }
-
-            // ── Notificación de subida de nivel ──
-            if (mostrandoNotifNivel && notifAlpha > 0) {
-                float a = notifAlpha;
-                int nw = 340, nh = 90;
-                int nx = getWidth() - nw - 16;
-                int ny = 16;
-
-                // Sombra
-                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a * 0.4f));
-                g2.setColor(Color.BLACK);
-                g2.fillRoundRect(nx + 4, ny + 4, nw, nh, 16, 16);
-
-                // Fondo oscuro con borde azul
-                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a * 0.95f));
-                g2.setColor(new Color(15, 25, 55));
-                g2.fillRoundRect(nx, ny, nw, nh, 16, 16);
-                g2.setColor(new Color(30, 120, 255));
-                g2.setStroke(new BasicStroke(2.5f));
-                g2.drawRoundRect(nx, ny, nw, nh, 16, 16);
-                g2.setStroke(new BasicStroke(1f));
-
-                // Franja lateral dorada
-                g2.setColor(new Color(255, 200, 50));
-                g2.fillRoundRect(nx, ny, 6, nh, 6, 6);
-
-                // Icono y texto
-                g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a));
-                g2.setFont(new Font("Segoe UI", Font.BOLD, 11));
-                g2.setColor(new Color(80, 170, 255));
-                g2.drawString("PASE DE BATALLA", nx + 18, ny + 20);
-
-                g2.setFont(new Font("Segoe UI", Font.BOLD, 20));
-                g2.setColor(new Color(255, 200, 50));
-                g2.drawString("¡Subiste al Nivel " + notifNivel + "!", nx + 18, ny + 46);
-
-                // Recompensa
-                PaseBatalla pb = sim.getPaseBatalla();
-                if (pb != null) {
-                    PaseBatalla.Recompensa r = pb.getRecompensa(notifNivel);
-                    if (r != null) {
-                        g2.setFont(new Font("Segoe UI", Font.PLAIN, 12));
-                        g2.setColor(new Color(200, 255, 200));
-                        g2.drawString("🎁 " + r.descripcion, nx + 18, ny + 66);
-                    }
-                }
-
-                // Botón "Ver" 
-                g2.setColor(new Color(30, 120, 255, 200));
-                g2.fillRoundRect(nx + nw - 68, ny + nh - 30, 58, 20, 8, 8);
-                g2.setFont(new Font("Segoe UI", Font.BOLD, 11));
-                g2.setColor(Color.WHITE);
-                g2.drawString("Ver →", nx + nw - 56, ny + nh - 16);
 
                 g2.setComposite(AlphaComposite.SrcOver);
             }
@@ -1447,33 +1639,30 @@ public class InterfazGrafica extends JFrame {
             vp.setVisible(true);
 
             if (vp.getResultado() == VentanaPrestigio.Resultado.PRESTIGE) {
-                // Dar billetes y reiniciar
                 pr.agregarBilletes(pr.billetesDelPrestige());
                 pr.incrementarPrestigios();
                 activarUIPrestigio();
-                // Reiniciar la simulación actual
+                // Bug12: refrescar cubos tras prestige
+                if (onRefrescarCubos != null) onRefrescarCubos.run();
                 reiniciarSimulacion();
             } else {
-                // Continuar: simplemente seguir jugando sin reiniciar
-                mostrarToast("Continuas jugando. El contador sigue...", new Color(60,120,220));
-                // Reactivar el animTimer si se habia parado
+                // Bug12: CONTINUAR — el juego sigue sin límite, animTimer ya está corriendo
+                // El botón "Hacer Prestige ahora" aparece en el glass pane (mostrarBtnPrestige=true)
+                mostrarToast("Continuas jugando sin limite. Usa el boton para prestigiar cuando quieras.", new Color(60,120,220));
                 if (!animTimer.isRunning()) animTimer.start();
             }
         });
     }
 
+    private Runnable onRefrescarCubos;
+    public void setOnRefrescarCubos(Runnable r) { onRefrescarCubos = r; }
+
     /** Muestra los elementos de prestige en la UI (billetes, botón bancos) */
     public void activarUIPrestigioPublico() { activarUIPrestigio(); }
 
     private void activarUIPrestigio() {
-        // Hacer visibles los elementos de prestige
-        if (lblBilletes != null) {
-            // Buscar el panelBilletes guardado en el centroWrap
-            Component[] comps = ((JPanel) getContentPane().getComponent(0)).getComponents();
-            // Recorrer para encontrar el panelBilletes via clientProperty
-            buscarYMostrarBilletes(getContentPane());
-        }
-        if (btnBancos != null) btnBancos.setVisible(true);
+        if (panelLateralBancos != null) panelLateralBancos.setVisible(true);
+        buscarYMostrarBilletes(getContentPane());
         revalidate(); repaint();
     }
 
@@ -1532,6 +1721,78 @@ public class InterfazGrafica extends JFrame {
             SwingUtilities.invokeLater(() -> mostrarToast("Nuevo banco comprado!", new Color(180,120,255)));
         });
         ventanaBancos.setVisible(true);
+    }
+
+    // ══════════════════════════════════════════════════
+    //  GLASS PANE HELPERS
+    // ══════════════════════════════════════════════════
+
+    /** Bug11: dibuja la notificación de nivel en el glass pane (siempre visible) */
+    private void dibujarNotifNivel(Graphics2D g2, int W, int H) {
+        float a = notifAlpha;
+        int nw = 340, nh = 90;
+        int nx = W - nw - 16, ny = 16;
+
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a * 0.4f));
+        g2.setColor(Color.BLACK);
+        g2.fillRoundRect(nx+4, ny+4, nw, nh, 16, 16);
+
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a * 0.95f));
+        g2.setColor(new Color(15, 25, 55));
+        g2.fillRoundRect(nx, ny, nw, nh, 16, 16);
+        g2.setColor(new Color(30, 120, 255));
+        g2.setStroke(new BasicStroke(2.5f));
+        g2.drawRoundRect(nx, ny, nw, nh, 16, 16);
+        g2.setStroke(new BasicStroke(1f));
+
+        g2.setColor(new Color(255, 200, 50));
+        g2.fillRoundRect(nx, ny, 6, nh, 6, 6);
+
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a));
+        g2.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        g2.setColor(new Color(80, 170, 255));
+        g2.drawString("PASE DE BATALLA", nx+18, ny+20);
+
+        g2.setFont(new Font("Segoe UI", Font.BOLD, 20));
+        g2.setColor(new Color(255, 200, 50));
+        g2.drawString("¡Subiste al Nivel " + notifNivel + "!", nx+18, ny+46);
+
+        PaseBatalla pb = sim.getPaseBatalla();
+        if (pb != null) {
+            PaseBatalla.Recompensa r = pb.getRecompensa(notifNivel);
+            if (r != null) {
+                g2.setFont(new Font("Segoe UI", Font.PLAIN, 12));
+                g2.setColor(new Color(200, 255, 200));
+                g2.drawString("+ " + r.descripcion, nx+18, ny+66);
+            }
+        }
+        g2.setColor(new Color(30, 120, 255, 200));
+        g2.fillRoundRect(nx+nw-68, ny+nh-30, 58, 20, 8, 8);
+        g2.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        g2.setColor(Color.WHITE);
+        g2.drawString("Ver ->", nx+nw-56, ny+nh-16);
+        g2.setComposite(AlphaComposite.SrcOver);
+    }
+
+    /** Bug12: botón de prestige manual visible en esquina tras alcanzar 200 clientes */
+    private void dibujarBotonPrestige(Graphics2D g2, int W, int H) {
+        int bw = 190, bh = 36;
+        int bx = W - bw - 16, by = H - bh - 16;
+
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, 0.92f));
+        g2.setColor(new Color(60, 20, 100));
+        g2.fillRoundRect(bx, by, bw, bh, 10, 10);
+        g2.setColor(new Color(180, 120, 255));
+        g2.setStroke(new BasicStroke(2f));
+        g2.drawRoundRect(bx, by, bw, bh, 10, 10);
+        g2.setStroke(new BasicStroke(1f));
+
+        g2.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        g2.setColor(Color.WHITE);
+        FontMetrics fm = g2.getFontMetrics();
+        String txt = "Hacer Prestige ahora";
+        g2.drawString(txt, bx + (bw - fm.stringWidth(txt))/2, by + bh/2 + fm.getAscent()/2 - 2);
+        g2.setComposite(AlphaComposite.SrcOver);
     }
 
     // ══════════════════════════════════════════════════

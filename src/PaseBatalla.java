@@ -79,6 +79,9 @@ public class PaseBatalla {
         this.eco = eco;
     }
 
+    /** Actualiza la economía activa (llamado por SimulacionBanco al iniciar) */
+    public void setEco(Economia eco) { this.eco = eco; }
+
     public void setOnSubirNivel(Runnable r) { this.onSubirNivel = r; }
 
     /** Agrega XP y procesa subidas de nivel */
@@ -109,6 +112,7 @@ public class PaseBatalla {
 
     private void aplicarRecompensa(int nivel) {
         if (nivel < 1 || nivel > MAX_NIVEL) return;
+        if (eco == null) return; // sin economía activa, saltar recompensa
         Recompensa r = RECOMPENSAS[nivel - 1];
         switch (r.tipo) {
             case MONEDAS -> eco.agregarMonedas(r.valorMonedas);

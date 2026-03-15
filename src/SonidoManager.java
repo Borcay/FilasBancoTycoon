@@ -5,6 +5,14 @@ import java.util.*;
 
 public class SonidoManager {
 
+    // ── Singleton global ─────────────────────────────────────────────────
+    private static SonidoManager instancia;
+    public static SonidoManager get() {
+        if (instancia == null) instancia = new SonidoManager();
+        return instancia;
+    }
+    private SonidoManager() {}  // constructor privado
+
     private static final String ARCHIVO_ATENDIDO = "cliente_atendido.wav";
     private static final String ARCHIVO_FIN      = "simulacion_fin.wav";
 
@@ -80,14 +88,7 @@ public class SonidoManager {
         try {
             FloatControl ctrl = (FloatControl) clipMusica.getControl(FloatControl.Type.MASTER_GAIN);
             float dB = (volumen <= 0f) ? ctrl.getMinimum() : 20f * (float) Math.log10(volumen);
-            dB = Math.max(ctrl.getMinimum(), Math.min(ctrl.getMaximum(), dB));
-            ctrl.setValue(dB);
-            // Bug2 fix: forzar que el motor de audio aplique el nuevo gain inmediatamente
-            // haciendo un micro-seek al frame actual
-            if (!pausado && clipMusica.isRunning()) {
-                int frame = clipMusica.getFramePosition();
-                clipMusica.setFramePosition(frame);
-            }
+            ctrl.setValue(Math.max(ctrl.getMinimum(), Math.min(ctrl.getMaximum(), dB)));
         } catch (IllegalArgumentException ignored) {}
     }
 
@@ -122,5 +123,6 @@ public class SonidoManager {
     }
     public boolean isPausado() { return pausado; }
     public float   getVolumen(){ return volumen; }
+    public boolean isReproduciendo() { return clipMusica != null && clipMusica.isRunning(); }
     public void    setOnCancionCambia(Runnable r) { onCancionCambia = r; }
 }

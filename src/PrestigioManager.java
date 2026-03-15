@@ -74,6 +74,14 @@ public class PrestigioManager {
         return true;
     }
 
+    // ── PaseBatalla global ────────────────────────────────────────────────
+    private PaseBatalla paseBatallaGlobal;
+    public PaseBatalla getPaseBatallaGlobal() {
+        if (paseBatallaGlobal == null) paseBatallaGlobal = new PaseBatalla(null);
+        return paseBatallaGlobal;
+    }
+    public void setPaseBatallaGlobal(PaseBatalla p) { paseBatallaGlobal = p; }
+
     // ── Bancos ────────────────────────────────────────────────────────────
     public int getNumeroBancos() { return numeroBancos; }
 

@@ -63,69 +63,78 @@ public class Cajero implements Runnable {
     @Override
     public void run() {
         while (corriendo && !simulacion.isTerminado()) {
+            Cliente cliente = null;
             try {
-                Cliente cliente = cola.take();
-                if (!corriendo || simulacion.isTerminado()) break;
-
-                // Si el cajero está cerrado al momento de tomar al cliente, redirigir
-                if (!abierto) {
-                    simulacion.redirigirCliente(cliente, this);
-                    continue;
-                }
-
-                clienteEnAtencion = cliente;
-                progresoAtencion  = 0.0;
-
-                long tiempoBase = eco.getServeBaseMs();
-                long tiempoReal = rapido
-                    ? (long)(tiempoBase * 0.55)
-                    : (long)(tiempoBase * (0.85 + random.nextDouble() * 0.30));
-
-                // Atender en pequeños pasos para poder abortar si cierran el cajero
-                int pasos = 60;
-                long msPorPaso = tiempoReal / pasos;
-                boolean abortado = false;
-
-                for (int i = 0; i < pasos; i++) {
-                    if (!corriendo || simulacion.isTerminado() || !abierto) {
-                        abortado = true;
-                        break;
-                    }
-                    Thread.sleep(msPorPaso);
-                    progresoAtencion = (double)(i + 1) / pasos;
-                }
-
-                if (abortado) {
-                    // El cajero cerró a mitad: redirigir al cliente
-                    Cliente enAtencion = clienteEnAtencion;
-                    clienteEnAtencion = null;
-                    progresoAtencion  = 0.0;
-                    if (enAtencion != null && !simulacion.isTerminado()) {
-                        simulacion.redirigirCliente(enAtencion, this);
-                    }
-                    Thread.interrupted(); // limpiar flag
-                    continue;
-                }
-
-                // Atención completada
-                if (!simulacion.isTerminado()) {
-                    cliente.setAtendido(true);
-                    cliente.setDesapareciendo(true);
-                    simulacion.clienteAtendido(cliente, this);
-                }
-                clienteEnAtencion = null;
-                progresoAtencion  = 0.0;
-
+                cliente = cola.take();
             } catch (InterruptedException e) {
-                clienteEnAtencion = null;
-                progresoAtencion  = 0.0;
                 Thread.interrupted();
+                continue; // volver al while, revisará corriendo
+            }
+
+            if (!corriendo || simulacion.isTerminado()) break;
+
+            // Si el cajero está cerrado al tomar al cliente, redirigir inmediatamente
+            if (!abierto) {
+                simulacion.redirigirCliente(cliente, this);
+                continue;
+            }
+
+            // Iniciar atención
+            clienteEnAtencion = cliente;
+            progresoAtencion  = 0.0;
+
+            long tiempoBase = eco.getServeBaseMs();
+            long tiempoReal = rapido
+                ? (long)(tiempoBase * 0.55)
+                : (long)(tiempoBase * (0.85 + random.nextDouble() * 0.30));
+
+            int  pasos      = 60;
+            long msPorPaso  = Math.max(1, tiempoReal / pasos);
+            boolean exito   = true;
+
+            for (int i = 0; i < pasos; i++) {
+                // Abortar si el cajero cerró o la simulación terminó
+                if (!corriendo || simulacion.isTerminado() || !abierto) {
+                    exito = false;
+                    break;
+                }
+                try {
+                    Thread.sleep(msPorPaso);
+                } catch (InterruptedException ie) {
+                    Thread.interrupted();
+                    exito = false;
+                    break;
+                }
+                // Solo actualizar progreso si seguimos abiertos
+                if (abierto) progresoAtencion = (double)(i + 1) / pasos;
+            }
+
+            // Limpiar siempre antes de decidir qué hacer
+            Cliente atendido  = clienteEnAtencion;
+            clienteEnAtencion = null;
+            progresoAtencion  = 0.0;
+
+            if (!exito) {
+                // Cajero cerró o fue interrumpido: redirigir al cliente
+                if (atendido != null && !simulacion.isTerminado()) {
+                    simulacion.redirigirCliente(atendido, this);
+                }
+            } else {
+                // Atención completada exitosamente
+                if (atendido != null && !simulacion.isTerminado()) {
+                    atendido.setAtendido(true);
+                    atendido.setDesapareciendo(true);
+                    simulacion.clienteAtendido(atendido, this);
+                }
             }
         }
     }
 
     public void abrir() {
         abierto = true;
+        // Despertar el hilo si está bloqueado en cola.take()
+        // Interrumpirlo hace que salga del take, limpie el flag y vuelva al while
+        if (hiloAtencion != null) hiloAtencion.interrupt();
     }
 
     public void cerrar() {
@@ -136,7 +145,9 @@ public class Cajero implements Runnable {
         cola.drainTo(pendientes);
         for (Cliente c : pendientes) simulacion.redirigirCliente(c, this);
 
-        // El cliente en atención se redirigirá cuando el loop detecte !abierto
+        // Interrumpir el hilo si está bloqueado en cola.take() o en sleep
+        // El catch lo maneja limpiamente: redirige al cliente en atención si había uno
+        if (hiloAtencion != null) hiloAtencion.interrupt();
     }
 
     public void agregarCliente(Cliente c)  { cola.offer(c); }
@@ -155,11 +166,11 @@ public class Cajero implements Runnable {
         if (hiloAtencion != null) hiloAtencion.interrupt();
     }
 
-    /** Bug6: Expulsa al cliente que está siendo atendido (usado para atrapar ladrones mid-atencion) */
+    /** Expulsa al cliente siendo atendido (para atrapar ladrones mid-atención) */
     public void expulsarClienteEnAtencion() {
-        clienteEnAtencion = null;
-        progresoAtencion  = 0.0;
+        // Interrumpir PRIMERO — el catch del hilo guarda la referencia y redirige
         if (hiloAtencion != null) hiloAtencion.interrupt();
+        progresoAtencion = 0.0;
     }
 
     // Permite actualizar la velocidad cuando se compra la mejora

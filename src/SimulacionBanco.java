@@ -12,7 +12,8 @@ public class SimulacionBanco {
 
     // ── Ladrones activos visibles para la GUI ──
     private final CopyOnWriteArrayList<Ladron> ladronesActivos = new CopyOnWriteArrayList<>();
-    private final AtomicBoolean primerLadronAvisado = new AtomicBoolean(false);
+    // Bug14: guardar en qué número de prestige se mostró el aviso, -1 = nunca
+    private static volatile int prestigioEnQueSeAvisoLadron = -1;
 
     // ── Meta diaria ──
     private volatile boolean bonusMetaOtorgadoHoy = false;
@@ -30,29 +31,28 @@ public class SimulacionBanco {
     private final AtomicInteger hoyAtendidos   = new AtomicInteger(0);
 
     private volatile boolean terminado = false;
-    private volatile boolean prestigioPendiente = false; // 200 alcanzados, esperando decisión
+    private volatile boolean prestigioPendiente = false;
     private final Economia eco;
     private InterfazGrafica gui;
-    private final SonidoManager sonido;
-    private PrestigioManager prestige; // puede ser null si no hay prestige aún
+    private PrestigioManager prestige;
 
     private volatile Thread hiloGenerador;
     private PaseBatalla paseBatalla;
 
     public SimulacionBanco(Economia eco) {
-        this.eco    = eco;
-        this.sonido = new SonidoManager();
-        this.paseBatalla = new PaseBatalla(eco);
-        eco.setPaseBatalla(paseBatalla);
+        this.eco = eco;
         inicializarCajeros(eco.getMaxCajeros());
     }
 
-    /** Asociar el PrestigioManager global (llamado desde Main después de construir) */
+    /** Asociar el PrestigioManager global */
     public void setPrestigio(PrestigioManager p) {
         this.prestige = p;
         eco.setPrestigio(p);
-        // Si hay mejoras iniciales desbloqueadas, aplicarlas
-        if (p != null && p.tieneMejorasIniciales()) {
+        // PaseBatalla global — conectar la economía de ESTE banco
+        this.paseBatalla = p.getPaseBatallaGlobal();
+        this.paseBatalla.setEco(eco); // apuntar al eco activo
+        eco.setPaseBatalla(paseBatalla);
+        if (p.tieneMejorasIniciales()) {
             eco.mejorarVelocidadGratis();
             eco.mejorarFlujoGratis();
         }
@@ -71,13 +71,15 @@ public class SimulacionBanco {
         this.gui = g;
         if (paseBatalla != null && g != null) {
             paseBatalla.setOnSubirNivel(() ->
-                javax.swing.SwingUtilities.invokeLater(() -> g.notificarSubidaNivel(paseBatalla.getUltimoNivelSubido()))
+                javax.swing.SwingUtilities.invokeLater(() ->
+                    g.notificarSubidaNivel(paseBatalla.getUltimoNivelSubido()))
             );
         }
     }
 
     public void iniciar() {
-        sonido.iniciarMusicaFondo();
+        // Música global: solo iniciar si no está ya corriendo
+        if (!SonidoManager.get().isReproduciendo()) SonidoManager.get().iniciarMusicaFondo();
         cajeros.forEach(Cajero::iniciar);
         iniciarGeneradorClientes();
         iniciarGeneradorLadrones();
@@ -128,9 +130,11 @@ public class SimulacionBanco {
                         dst.agregarCliente(ladron);
                         ladronesActivos.add(ladron);
 
-                        if (primerLadronAvisado.compareAndSet(false, true) && gui != null) {
-                            javax.swing.SwingUtilities.invokeLater(() ->
-                                gui.mostrarAvisoLadron());
+                        // Bug14: mostrar aviso solo la primera vez de cada prestige
+                        int presCount = (prestige != null) ? prestige.getPrestigios() : 0;
+                        if (prestigioEnQueSeAvisoLadron != presCount && gui != null) {
+                            prestigioEnQueSeAvisoLadron = presCount;
+                            javax.swing.SwingUtilities.invokeLater(() -> gui.mostrarAvisoLadron());
                         }
                     }
                     // Aplicar multiplicador de prestige al intervalo
@@ -157,9 +161,16 @@ public class SimulacionBanco {
                 l.setEliminado(true);
                 l.setMostrandoPolicia(true);
                 l.setAlphaPolicia(1.0f);
+                // Remover de colas
                 for (Cajero c : cajeros) c.getCola().remove(l);
+                // Bug13: si está siendo atendido, expulsarlo del cajero
+                for (Cajero c : cajeros) {
+                    if (c.getClienteEnAtencion() == l) {
+                        c.expulsarClienteEnAtencion();
+                        break;
+                    }
+                }
                 ladronesAtrapados++;
-                // Recompensa por atrapar al ladrón
                 eco.agregarMonedas(RECOMPENSA_ATRAPA);
                 if (paseBatalla != null) paseBatalla.agregarXP(PaseBatalla.XP_LADRON_ATRAPADO);
                 if (gui != null) {
@@ -297,7 +308,8 @@ public class SimulacionBanco {
         int tot = totalAtendidos.incrementAndGet();
         hoyAtendidos.incrementAndGet();
         eco.agregarMonedas(eco.getMonedasPorCliente(cl.isVip()));
-        sonido.sonarClienteAtendido();
+        // Solo sonar si este banco es el que se está viendo
+        if (gui != null) SonidoManager.get().sonarClienteAtendido();
         // XP por cliente atendido
         if (paseBatalla != null)
             paseBatalla.agregarXP(cl.isVip() ? PaseBatalla.XP_CLIENTE_VIP : PaseBatalla.XP_CLIENTE_NORMAL);
@@ -310,11 +322,16 @@ public class SimulacionBanco {
         // Verificar meta diaria
         verificarMetaDiaria();
 
-        if (tot >= META_CLIENTES) terminar();
+        if (tot >= META_CLIENTES) alcanzarMeta();
     }
 
     public void redirigirCliente(Cliente cl, Cajero actual) {
-        if (terminado) return;
+        redirigirClienteConIntentos(cl, actual, 0);
+    }
+
+    private void redirigirClienteConIntentos(Cliente cl, Cajero actual, int intentos) {
+        // Bug7: descartar cliente tras 20 intentos (~10s) para evitar zombies
+        if (terminado || intentos > 20) return;
         List<Cajero> otros = getCajerosAbiertos().stream()
             .filter(c -> c != actual).collect(Collectors.toList());
         if (!otros.isEmpty()) {
@@ -323,7 +340,7 @@ public class SimulacionBanco {
             dst.agregarCliente(cl);
         } else {
             new Thread(() -> {
-                try { Thread.sleep(500); redirigirCliente(cl, actual); }
+                try { Thread.sleep(500); redirigirClienteConIntentos(cl, actual, intentos + 1); }
                 catch (InterruptedException e) { Thread.currentThread().interrupt(); }
             }).start();
         }
@@ -333,12 +350,38 @@ public class SimulacionBanco {
         return cajeros.stream().filter(Cajero::isAbierto).collect(Collectors.toList());
     }
 
+    private volatile boolean metaAlcanzada = false; // Bug12: meta alcanzada pero juego sigue
+
+    /** Detiene todos los hilos del banco (llamado al prestigiar para limpiar el banco viejo) */
+    public void detenerTodo() {
+        if (terminado) return;
+        terminado = true;
+        cajeros.forEach(Cajero::detener);
+        setGui(null);
+    }
+
     private void terminar() {
         if (terminado) return;
         terminado = true;
         cajeros.forEach(Cajero::detener);
-        sonido.sonarFin();
+        SonidoManager.get().sonarFin();
         if (gui != null) gui.ofrecerPrestigio();
+    }
+
+    /** Bug12: Al llegar a 200, ofrecer prestige pero NO detener el juego */
+    private void alcanzarMeta() {
+        if (metaAlcanzada) return;
+        metaAlcanzada = true;
+        if (gui != null) gui.ofrecerPrestigio();
+        // El juego sigue: los cajeros siguen, llegan más clientes
+    }
+
+    /** Bug12: Botón de prestige manual (disponible después de alcanzar 200) */
+    public boolean puedePrestigiarAhora() { return metaAlcanzada; }
+
+    public void prestigiarAhora() {
+        if (!metaAlcanzada) return;
+        terminar();
     }
 
     /** Click manual: atiende al primer cliente en cola del cajero más cercano al click */
@@ -374,7 +417,7 @@ public class SimulacionBanco {
             gui.iniciarFadeCliente(cl, cajIdx);
         }
         verificarMetaDiaria();
-        if (tot >= META_CLIENTES) terminar();
+        if (tot >= META_CLIENTES) alcanzarMeta();
         return true;
     }
 
@@ -383,7 +426,8 @@ public class SimulacionBanco {
     public int  getClientesAtendidosHoy()            { return hoyAtendidos.get(); }
     public int  getMetaClientes()                    { return META_CLIENTES; }
     public boolean isTerminado()                     { return terminado; }
-    public SonidoManager getSonido()                 { return sonido; }
+    public boolean isMetaAlcanzada()                 { return metaAlcanzada; }
+    public SonidoManager getSonido()                 { return SonidoManager.get(); }
     public long getDuracionDia()                     { return DURACION_DIA; }
     public List<Ladron> getLadronesActivos()         { return ladronesActivos; }
     public PaseBatalla  getPaseBatalla()             { return paseBatalla; }
