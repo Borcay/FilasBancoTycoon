@@ -185,6 +185,7 @@ public class SimulacionBanco {
                 }
                 ladronesAtrapados++;
                 eco.agregarMonedas(RECOMPENSA_ATRAPA);
+                SonidoManager.get().sonarLadronAtrapado();
                 if (paseBatalla != null) paseBatalla.agregarXP(PaseBatalla.XP_LADRON_ATRAPADO);
                 if (gui != null) {
                     final int fx = (int)l.getX(), fy = (int)l.getY();

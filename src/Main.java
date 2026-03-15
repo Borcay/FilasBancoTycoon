@@ -25,9 +25,14 @@ public class Main {
     }
 
     private static void aplicarEstadoDebug() {
-        // Simular 1 prestige ya hecho + 10 billetes para probar el árbol y los bancos
+        // Simular 1 prestige ya hecho + 10 billetes + monedas iniciales x20
         prestige.incrementarPrestigios();
-        prestige.agregarBilletes(1000);
+        prestige.agregarBilletes(10);
+        // Las monedas se aplican después de crear la economía — se hace en iniciarNuevoBanco
+    }
+
+    private static void aplicarMonedasDebug(Economia eco) {
+        eco.agregarMonedas(5000); // x20 de lo normal para probar mejoras rápido
     }
 
     /**
@@ -37,6 +42,7 @@ public class Main {
      */
     private static void iniciarNuevoBanco(int indiceAReemplazar) {
         Economia eco = new Economia();
+        if (DEBUG) aplicarMonedasDebug(eco);
         SimulacionBanco sim = new SimulacionBanco(eco);
         sim.setPrestigio(prestige);
 

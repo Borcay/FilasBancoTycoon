@@ -95,14 +95,46 @@ public class InterfazGrafica extends JFrame {
         "Mas monedas por cliente",
         "Clientes VIP dan x2 monedas"
     };
-    // Descripción detallada que se muestra al hacer hover
-    private static final String[] UPG_EFECTOS = {
-        "+1 cajero activo (max 5 en total)",
-        "Intervalo entre clientes: 2.1s → 0.4s (-420ms por nivel)",
-        "Tiempo de atención: 4.0s → 0.9s (-720ms por nivel)",
-        "Monedas por cliente: $10 → $42 (+$8 por nivel)",
-        "Probabilidad VIP: +10% por nivel (max 30%)"
-    };
+    // UPG_EFECTOS ya no es estático — se genera dinámicamente con generarEfectoMejora()
+
+    /**
+     * Genera la descripción de efecto de una mejora según el nivel actual.
+     * Fácilmente ampliable: solo actualiza las fórmulas si cambias los valores en Economia.
+     */
+    private String generarEfectoMejora(int idx) {
+        int lv = nivelMejora(idx);
+        int mx = maxMejora(idx);
+        if (lv >= mx) return "Nivel maximo alcanzado";
+
+        switch (idx) {
+            case 0: { // Nuevo Cajero: 1+nivel cajeros
+                int actual = 1 + lv;
+                int siguiente = 1 + lv + 1;
+                return "Cajeros: " + actual + " → " + siguiente;
+            }
+            case 1: { // Mayor Afluencia: max(400, 2100 - nivel*420) ms
+                long actual   = Math.max(400, 2100 - lv * 420L);
+                long siguiente = Math.max(400, 2100 - (lv+1) * 420L);
+                return String.format("Intervalo: %.2fs → %.2fs", actual/1000.0, siguiente/1000.0);
+            }
+            case 2: { // Cajero Veloz: max(900, 4000 - nivel*720) ms
+                long actual    = Math.max(900, 4000 - lv * 720L);
+                long siguiente = Math.max(900, 4000 - (lv+1) * 720L);
+                return String.format("Atencion: %.2fs → %.2fs", actual/1000.0, siguiente/1000.0);
+            }
+            case 3: { // Comision Mayor: 10 + nivel*8 monedas
+                int actual    = 10 + lv * 8;
+                int siguiente = 10 + (lv+1) * 8;
+                return "Monedas/cliente: $" + actual + " → $" + siguiente;
+            }
+            case 4: { // Sala VIP: nivel*10% prob VIP
+                int actual    = lv * 10;
+                int siguiente = (lv+1) * 10;
+                return "Prob. VIP: " + actual + "% → " + siguiente + "%";
+            }
+            default: return "";
+        }
+    }
 
     // ── Reproductor ──
     private JLabel  lblCancion;
@@ -142,18 +174,33 @@ public class InterfazGrafica extends JFrame {
     }
 
     private void registrarAtajosTeclado() {
-        // 1-9 = bancos 1-9, 0 = banco 10
         KeyboardFocusManager.getCurrentKeyboardFocusManager()
             .addKeyEventDispatcher(e -> {
                 if (e.getID() != java.awt.event.KeyEvent.KEY_PRESSED) return false;
                 char c = e.getKeyChar();
+                // P = prestigiar si está disponible en el banco actual
+                if (c == 'p' || c == 'P') {
+                    if (sim.isMetaAlcanzada() && !sim.isTerminado()) {
+                        // Prestigiar directamente sin menú
+                        PrestigioManager pr = sim.getPrestigio();
+                        if (pr != null) {
+                            pr.agregarBilletes(pr.billetesDelPrestige());
+                            pr.incrementarPrestigios();
+                            activarUIPrestigio();
+                            if (onRefrescarCubos != null) onRefrescarCubos.run();
+                            if (onPrestigioConBanco != null) onPrestigioConBanco.accept(sim);
+                        }
+                        return true;
+                    }
+                    return false;
+                }
                 if (c >= '1' && c <= '9') {
-                    int idx = c - '1'; // '1'->0, '2'->1, ...
+                    int idx = c - '1';
                     if (onCambiarBanco != null) onCambiarBanco.accept(idx);
                     return true;
                 }
                 if (c == '0') {
-                    if (onCambiarBanco != null) onCambiarBanco.accept(9); // 0 = banco 10
+                    if (onCambiarBanco != null) onCambiarBanco.accept(9);
                     return true;
                 }
                 return false;
@@ -340,7 +387,7 @@ public class InterfazGrafica extends JFrame {
 
         SwingUtilities.invokeLater(() -> {
             actualizarPanelInferior();
-            mostrarToast("Viendo Banco " + (obtenerIndiceBanco(nuevoSim) + 1), new Color(100, 160, 255));
+            // Sin toast al cambiar banco — el cubo activo ya lo indica visualmente
             // Bug3: si el banco ya alcanzó la meta pero el diálogo no salió, mostrarlo ahora
             if (nuevoSim.isMetaAlcanzada() && !nuevoSim.isTerminado()) {
                 nuevoSim.ofrecerPrestigioAhora();
@@ -787,20 +834,109 @@ public class InterfazGrafica extends JFrame {
         sp.getViewport().setBackground(C_BOT_BG);
         sp.setBackground(C_BOT_BG);
         sp.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        // Hover: AWTEventListener global — funciona sin importar qué componente tiene el foco
+        int[] hoveredIdx = { -1 };
+        java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(awtEvent -> {
+            if (!(awtEvent instanceof MouseEvent)) return;
+            MouseEvent me = (MouseEvent) awtEvent;
+            if (me.getID() != MouseEvent.MOUSE_MOVED && me.getID() != MouseEvent.MOUSE_EXITED) return;
+            if (panelesMejora == null) return;
+
+            // Convertir el punto del evento al sistema de coordenadas del fila panel
+            Point pFila;
+            try {
+                pFila = SwingUtilities.convertPoint(me.getComponent(), me.getPoint(), fila);
+            } catch (Exception ex) { return; }
+
+            int nuevoHover = -1;
+            for (int i = 0; i < 5; i++) {
+                if (panelesMejora[i] != null && panelesMejora[i].getBounds().contains(pFila)) {
+                    nuevoHover = i;
+                    break;
+                }
+            }
+
+            if (nuevoHover == hoveredIdx[0]) return;
+
+            // Salir del anterior
+            if (hoveredIdx[0] >= 0 && hoveredIdx[0] < 5 && panelesMejora[hoveredIdx[0]] != null) {
+                int prev = hoveredIdx[0];
+                boolean[] hov = (boolean[]) panelesMejora[prev].getClientProperty("hovering");
+                if (hov != null) hov[0] = false;
+                refrescarColorTarjeta(panelesMejora[prev], prev);
+                JLabel lEf = (JLabel) panelesMejora[prev].getClientProperty("lblEfecto");
+                if (lEf != null) SwingUtilities.invokeLater(() -> lEf.setVisible(false));
+            }
+
+            hoveredIdx[0] = nuevoHover;
+
+            // Entrar al nuevo
+            if (nuevoHover >= 0) {
+                boolean[] hov = (boolean[]) panelesMejora[nuevoHover].getClientProperty("hovering");
+                if (hov != null) hov[0] = true;
+                final int idx = nuevoHover;
+                SwingUtilities.invokeLater(() -> {
+                    if (!esBloqueado(idx) && nivelMejora(idx) < maxMejora(idx))
+                        panelesMejora[idx].setBackground(C_UPG_HOVER);
+                    JLabel lEf = (JLabel) panelesMejora[idx].getClientProperty("lblEfecto");
+                    if (lEf != null) lEf.setVisible(true);
+                    panelesMejora[idx].repaint();
+                });
+            }
+        }, java.awt.AWTEvent.MOUSE_EVENT_MASK | java.awt.AWTEvent.MOUSE_MOTION_EVENT_MASK);
+
+        sp.getViewport().addMouseListener(new MouseAdapter() {
+            @Override public void mousePressed(MouseEvent e) {
+                Point p = SwingUtilities.convertPoint(sp.getViewport(), e.getPoint(), fila);
+                for (int i = 0; i < 5; i++) {
+                    if (panelesMejora[i].getBounds().contains(p)) {
+                        onMejora(i);
+                        break;
+                    }
+                }
+            }
+        });
+
         cont.add(sp);
         return cont;
     }
 
     private JPanel crearTarjeta(int idx) {
+        boolean[] hovering = { false };
+        // Wrapper para poder referenciar card desde el adapter antes de que exista
+        JPanel[] cardRef = { null };
+
+        MouseAdapter hoverAdapter = new MouseAdapter() {
+            private JPanel card() { return cardRef[0]; }
+            @Override public void mouseEntered(MouseEvent e) {
+                if (card() == null) return;
+                hovering[0] = true;
+                if (!esBloqueado(idx) && nivelMejora(idx) < maxMejora(idx))
+                    card().setBackground(C_UPG_HOVER);
+                JLabel lEf = (JLabel) card().getClientProperty("lblEfecto");
+                if (lEf != null) lEf.setVisible(true);
+                card().repaint();
+            }
+            @Override public void mouseExited(MouseEvent e) {
+                if (card() == null) return;
+                // Verificar que el mouse salió del card completo, no solo de un hijo
+                Point p = SwingUtilities.convertPoint((Component)e.getSource(), e.getPoint(), card());
+                if (card().contains(p)) return; // sigue dentro del card
+                hovering[0] = false;
+                refrescarColorTarjeta(card(), idx);
+                JLabel lEf = (JLabel) card().getClientProperty("lblEfecto");
+                if (lEf != null) lEf.setVisible(false);
+            }
+            @Override public void mousePressed(MouseEvent e) { onMejora(idx); }
+        };
+
         JPanel card = new JPanel() {
             @Override protected void paintComponent(Graphics g) {
-                // NO llamar super — pintamos todo nosotros para controlar el fondo exacto
                 Graphics2D g2 = (Graphics2D)g;
                 g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
-                // Fondo del contenedor padre para no dejar artefactos
                 g2.setColor(getParent() != null ? getParent().getBackground() : C_BOT_BG);
                 g2.fillRect(0, 0, getWidth(), getHeight());
-                // Rounded rect con el color de estado actual
                 g2.setColor(getBackground());
                 g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
             }
@@ -818,31 +954,12 @@ public class InterfazGrafica extends JFrame {
         };
         card.setLayout(new BoxLayout(card, BoxLayout.Y_AXIS));
         card.setPreferredSize(new Dimension(160, BOT_ALTO - 36));
-        card.setOpaque(false); // false para que nuestro paintComponent controle todo
+        card.setOpaque(false);
         card.setBorder(new EmptyBorder(9, 11, 9, 11));
-
-        // Flag para saber si el mouse está encima
-        boolean[] hovering = { false };
-
-        card.addMouseListener(new MouseAdapter() {
-            @Override public void mouseEntered(MouseEvent e) {
-                hovering[0] = true;
-                if (!esBloqueado(idx) && nivelMejora(idx) < maxMejora(idx))
-                    card.setBackground(C_UPG_HOVER);
-                JLabel lEf = (JLabel) card.getClientProperty("lblEfecto");
-                if (lEf != null) lEf.setVisible(true);
-            }
-            @Override public void mouseExited(MouseEvent e) {
-                hovering[0] = false;
-                refrescarColorTarjeta(card, idx);
-                JLabel lEf = (JLabel) card.getClientProperty("lblEfecto");
-                if (lEf != null) lEf.setVisible(false);
-            }
-            @Override public void mousePressed(MouseEvent e) { onMejora(idx); }
-        });
-
-        // Guardar referencia al flag en el panel para que refrescarColorTarjeta lo respete
+        card.addMouseListener(hoverAdapter);
         card.putClientProperty("hovering", hovering);
+        card.putClientProperty("hoverAdapter", hoverAdapter);
+        cardRef[0] = card; // conectar la referencia
 
         refrescarColorTarjeta(card, idx);
         rellenarTarjeta(card, idx);
@@ -906,7 +1023,7 @@ public class InterfazGrafica extends JFrame {
         card.add(lDesc);
 
         // Efecto detallado — visible solo en hover
-        JLabel lEfecto = new JLabel("<html><body style='width:130px'>" + UPG_EFECTOS[idx] + "</body></html>");
+        JLabel lEfecto = new JLabel("<html><body style='width:130px'>" + generarEfectoMejora(idx) + "</body></html>");
         lEfecto.setFont(new Font("Segoe UI", Font.ITALIC, 9));
         lEfecto.setForeground(new Color(60, 130, 80));
         lEfecto.setAlignmentX(Component.LEFT_ALIGNMENT);
@@ -938,6 +1055,23 @@ public class InterfazGrafica extends JFrame {
         card.add(dots);
         card.revalidate();
         card.repaint();
+        // Propagar hover a todos los hijos para que funcione cuando el mouse está sobre el texto
+        MouseAdapter ha = (MouseAdapter) card.getClientProperty("hoverAdapter");
+        if (ha != null) {
+            for (java.awt.Component child : getAllComponents(card)) {
+                child.addMouseListener(ha);
+            }
+        }
+    }
+
+    /** Devuelve todos los componentes descendientes de un contenedor */
+    private java.util.List<java.awt.Component> getAllComponents(java.awt.Container c) {
+        java.util.List<java.awt.Component> list = new java.util.ArrayList<>();
+        for (java.awt.Component child : c.getComponents()) {
+            list.add(child);
+            if (child instanceof java.awt.Container) list.addAll(getAllComponents((java.awt.Container) child));
+        }
+        return list;
     }
 
     private void onMejora(int idx) {

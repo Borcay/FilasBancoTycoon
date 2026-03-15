@@ -21,7 +21,7 @@ public class VentanaPrestigio extends JDialog {
 
     public VentanaPrestigio(JFrame parent, PrestigioManager prestige, int totalClientes) {
         super(parent, "200 Clientes Atendidos!", true);
-        setSize(500, 360);
+        setSize(620, 460);
         setLocationRelativeTo(parent);
         setUndecorated(false);
         setResizable(false);

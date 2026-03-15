@@ -69,21 +69,92 @@ public class VentanaArbolHabilidades extends JDialog {
         // Descuento va al centro como nodo intermedio
         // Las otras 4 salen del Descuento
         private final int[][] POSICIONES = {
-            {255, 162},  // 0 Descuento mejoras   - CENTRO (nodo intermedio)
-            {440,  40},  // 1 Bonus monedas        - arriba der
-            {440, 130},  // 2 Mejoras iniciales    - centro-arriba der
-            {440, 220},  // 3 Menos ladrones       - centro-abajo der
-            {440, 310},  // 4 Click manual         - abajo der
+            { 60, 152},  // 0 Descuento mejoras   - izquierda (nodo raíz visible)
+            {400,  30},  // 1 Bonus monedas        - arriba der
+            {400, 122},  // 2 Mejoras iniciales    - centro-arriba der
+            {400, 214},  // 3 Menos ladrones       - centro-abajo der
+            {400, 306},  // 4 Click manual         - abajo der
         };
-
-        // Nodo raíz a la izquierda
-        private final int RX = 50, RY = 162;
 
         ArbolPanel() {
             setBackground(C_BG);
             setPreferredSize(new Dimension(680, 390));
+            setLayout(null); // null layout para el tooltip flotante
 
+        // Labels persistentes del tooltip (se actualiza el texto, no se recrea)
+        JLabel tooltipNombre = new JLabel();
+        JLabel tooltipDesc   = new JLabel();
+        JLabel tooltipEstado = new JLabel();
+
+        // Tooltip flotante
+        JPanel tooltip = new JPanel() {
+            @Override protected void paintComponent(Graphics g) {
+                Graphics2D g2 = (Graphics2D) g;
+                g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+                g2.setColor(new Color(15, 20, 50, 230));
+                g2.fillRoundRect(0, 0, getWidth(), getHeight(), 10, 10);
+                g2.setColor(C_PURPLE);
+                g2.setStroke(new BasicStroke(1.5f));
+                g2.drawRoundRect(1, 1, getWidth()-2, getHeight()-2, 10, 10);
+                g2.setStroke(new BasicStroke(1f));
+            }
+        };
+        tooltip.setOpaque(false);
+        tooltip.setLayout(new BoxLayout(tooltip, BoxLayout.Y_AXIS));
+        tooltip.setBorder(new EmptyBorder(8, 10, 8, 10));
+
+        tooltipNombre.setFont(new Font("Segoe UI", Font.BOLD, 12));
+        tooltipNombre.setAlignmentX(Component.LEFT_ALIGNMENT);
+        tooltipDesc.setFont(new Font("Segoe UI", Font.PLAIN, 11));
+        tooltipDesc.setForeground(C_TEXT);
+        tooltipDesc.setAlignmentX(Component.LEFT_ALIGNMENT);
+        tooltipEstado.setFont(new Font("Segoe UI", Font.ITALIC, 10));
+        tooltipEstado.setAlignmentX(Component.LEFT_ALIGNMENT);
+
+        tooltip.add(tooltipNombre);
+        tooltip.add(Box.createVerticalStrut(4));
+        tooltip.add(tooltipDesc);
+        tooltip.add(Box.createVerticalStrut(4));
+        tooltip.add(tooltipEstado);
+        tooltip.setVisible(false);
+        add(tooltip);
+
+            addMouseMotionListener(new MouseMotionAdapter() {
+                @Override public void mouseMoved(MouseEvent e) {
+                    PrestigioManager.Habilidad[] habs = PrestigioManager.Habilidad.values();
+                    for (int i = 0; i < habs.length; i++) {
+                        int nx = POSICIONES[i][0], ny = POSICIONES[i][1];
+                        if (e.getX() >= nx && e.getX() <= nx+NW && e.getY() >= ny && e.getY() <= ny+NH) {
+                            PrestigioManager.Habilidad h = habs[i];
+                            // Actualizar texto del tooltip
+                            tooltipNombre.setText(h.nombre);
+                            tooltipNombre.setForeground(prestige.estaDesbloqueada(h) ? C_DONE : C_PURPLE);
+                            tooltipDesc.setText("<html><body style='width:190px'>" + h.descripcion + "</body></html>");
+                            String estado = prestige.estaDesbloqueada(h) ? "Ya desbloqueada"
+                                : prestige.getBilletes() >= h.costoBilletes
+                                    ? "Costo: " + h.costoBilletes + " B — click para comprar"
+                                    : "Necesitas " + h.costoBilletes + " B (tienes " + prestige.getBilletes() + ")";
+                            tooltipEstado.setText(estado);
+                            tooltipEstado.setForeground(prestige.estaDesbloqueada(h) ? C_DONE
+                                : prestige.getBilletes() >= h.costoBilletes ? C_ACCENT
+                                : new Color(180, 80, 80));
+                            // Posicionar
+                            int tx = nx + NW + 8;
+                            int ty = ny;
+                            if (tx + 220 > getWidth()) tx = nx - 228;
+                            if (ty + 100 > getHeight()) ty = getHeight() - 100;
+                            tooltip.setBounds(tx, ty, 220, 95);
+                            tooltip.setVisible(true);
+                            repaint();
+                            return;
+                        }
+                    }
+                    tooltip.setVisible(false);
+                    repaint();
+                }
+            });
             addMouseListener(new MouseAdapter() {
+                @Override public void mouseExited(MouseEvent e) { tooltip.setVisible(false); repaint(); }
                 @Override public void mouseClicked(MouseEvent e) {
                     PrestigioManager.Habilidad[] habs = PrestigioManager.Habilidad.values();
                     for (int i = 0; i < habs.length; i++) {
@@ -100,18 +171,10 @@ public class VentanaArbolHabilidades extends JDialog {
 
         private void onClickNodo(PrestigioManager.Habilidad h) {
             if (prestige.estaDesbloqueada(h)) return;
-            if (prestige.getBilletes() < h.costoBilletes) {
-                JOptionPane.showMessageDialog(VentanaArbolHabilidades.this,
-                    "Necesitas " + h.costoBilletes + " billete(s). Tienes " + prestige.getBilletes() + ".",
-                    "Sin billetes", JOptionPane.WARNING_MESSAGE);
-                return;
-            }
-            int ok = JOptionPane.showConfirmDialog(VentanaArbolHabilidades.this,
-                "¿Desbloquear \"" + h.nombre + "\" por " + h.costoBilletes + " billete(s)?",
-                "Confirmar", JOptionPane.YES_NO_OPTION);
-            if (ok == JOptionPane.YES_OPTION && prestige.desbloquear(h)) {
+            if (prestige.getBilletes() < h.costoBilletes) return; // sin billetes, ignorar silenciosamente
+            if (prestige.desbloquear(h)) {
                 if (onCompra != null) onCompra.run();
-                construir(); // rebuild to reflect new state
+                construir();
             }
         }
 
@@ -124,28 +187,20 @@ public class VentanaArbolHabilidades extends JDialog {
 
             PrestigioManager.Habilidad[] habs = PrestigioManager.Habilidad.values();
 
-            // Dibujar línea raíz → Descuento (índice 0)
-            {
-                boolean done0 = prestige.estaDesbloqueada(habs[0]);
-                int dcx = POSICIONES[0][0] + NW/2;
-                int dcy = POSICIONES[0][1] + NH/2;
-                g2.setColor(done0 ? C_DONE : new Color(50, 60, 100));
-                g2.setStroke(new BasicStroke(done0 ? 2.5f : 1.5f,
-                    BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                g2.drawLine(RX + NW, RY + NH/2, dcx, dcy);
-            }
-            g2.setStroke(new BasicStroke(1f));
-
-            // Dibujar líneas Descuento → habilidades 1..4
+            // Líneas: Descuento (índice 0) → las otras 4 habilidades
             int dcx = POSICIONES[0][0] + NW;
             int dcy = POSICIONES[0][1] + NH/2;
             for (int i = 1; i < habs.length; i++) {
                 boolean doneI = prestige.estaDesbloqueada(habs[i]);
+                boolean done0 = prestige.estaDesbloqueada(habs[0]);
                 int nx = POSICIONES[i][0];
                 int ny = POSICIONES[i][1] + NH/2;
-                Color lineColor = doneI ? C_DONE : new Color(50, 60, 100);
+                // Línea activa si Descuento está desbloqueado Y la habilidad destino también
+                Color lineColor = (done0 && doneI) ? C_DONE
+                                : done0 ? new Color(80, 90, 160)
+                                : new Color(40, 45, 75);
                 g2.setColor(lineColor);
-                g2.setStroke(new BasicStroke(doneI ? 2.5f : 1.5f,
+                g2.setStroke(new BasicStroke((done0 && doneI) ? 2.5f : 1.5f,
                     BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                 int mx = (dcx + nx) / 2;
                 QuadCurve2D curve = new QuadCurve2D.Float(dcx, dcy, mx, ny, nx, ny);
@@ -153,34 +208,10 @@ public class VentanaArbolHabilidades extends JDialog {
             }
             g2.setStroke(new BasicStroke(1f));
 
-            // Dibujar nodo raíz
-            dibujarNodoRaiz(g2);
-
-            // Dibujar nodos de habilidades
+            // Dibujar todos los nodos
             for (int i = 0; i < habs.length; i++) {
                 dibujarNodo(g2, habs[i], POSICIONES[i][0], POSICIONES[i][1]);
             }
-        }
-
-        private void dibujarNodoRaiz(Graphics2D g2) {
-            int x = RX, y = RY;
-            g2.setColor(new Color(30, 50, 110));
-            g2.fillRoundRect(x, y, NW, NH, 14, 14);
-            g2.setColor(C_ACCENT);
-            g2.setStroke(new BasicStroke(2.5f));
-            g2.drawRoundRect(x, y, NW, NH, 14, 14);
-            g2.setStroke(new BasicStroke(1f));
-            // Estrella / icono
-            g2.setFont(new Font("Segoe UI", Font.BOLD, 13));
-            g2.setColor(C_ACCENT);
-            String t1 = "Arbol de";
-            String t2 = "Habilidades";
-            FontMetrics fm = g2.getFontMetrics();
-            g2.drawString(t1, x + (NW - fm.stringWidth(t1))/2, y + NH/2 - 4);
-            g2.setFont(new Font("Segoe UI", Font.PLAIN, 11));
-            fm = g2.getFontMetrics();
-            g2.setColor(new Color(200, 180, 100));
-            g2.drawString(t2, x + (NW - fm.stringWidth(t2))/2, y + NH/2 + 12);
         }
 
         private void dibujarNodo(Graphics2D g2, PrestigioManager.Habilidad h, int x, int y) {
