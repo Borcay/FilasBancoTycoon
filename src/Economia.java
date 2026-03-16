@@ -155,4 +155,5 @@ public class Economia {
     /** Mejoras gratuitas para la habilidad de prestige "Mejoras Iniciales" */
     public synchronized void mejorarVelocidadGratis() { if (nivelVelocidad < MAX_VELOCIDAD) nivelVelocidad++; }
     public synchronized void mejorarFlujoGratis()     { if (nivelFlujo     < MAX_FLUJO)     nivelFlujo++;     }
+    public synchronized void mejorarVipGratis()       { if (nivelVip       < MAX_VIP)       nivelVip++;       }
 }

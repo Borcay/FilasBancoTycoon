@@ -112,6 +112,7 @@ public class Main {
         guiActual.setOnCompraBancoLateral(() -> SwingUtilities.invokeLater(() -> {
             if (prestige.comprarBanco()) {
                 agregarNuevoBanco();
+                SonidoManager.get().sonarBancoComprado();
                 guiActual.mostrarToast("Nuevo banco comprado!", new Color(180, 120, 255));
             } else {
                 guiActual.mostrarToast("Necesitas " + prestige.costoBanco() + " B.", new Color(180, 60, 60));

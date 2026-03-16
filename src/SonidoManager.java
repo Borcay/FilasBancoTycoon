@@ -13,11 +13,14 @@ public class SonidoManager {
     }
     private SonidoManager() {}  // constructor privado
 
-    private static final String ARCHIVO_ATENDIDO     = "cliente_atendido.wav";
-    private static final String ARCHIVO_FIN          = "simulacion_fin.wav";
+    private static final String ARCHIVO_ATENDIDO        = "cliente_atendido.wav";
+    private static final String ARCHIVO_FIN             = "simulacion_fin.wav";
     private static final String ARCHIVO_LADRON_LLEGA    = "ladron_aparece.wav";
     private static final String ARCHIVO_LADRON_ROBA     = "ladron_roba.wav";
     private static final String ARCHIVO_LADRON_ATRAPADO = "ladron_atrapado.wav";
+    private static final String ARCHIVO_MEJORA_ARBOL    = "mejora_arbol.wav";
+    private static final String ARCHIVO_BANCO_COMPRADO  = "banco_comprado.wav";
+    private static final String ARCHIVO_PRESTIGE        = "prestige.wav";
 
     private static final String[] CANCIONES = {
         "Sunburst.wav",
@@ -29,7 +32,7 @@ public class SonidoManager {
     private int    indiceActual            = 0;
     private Clip   clipMusica              = null;
     private boolean pausado               = false;
-    private float  volumen                = 0.8f;
+    private float  volumen                = 0.25f;
     private Runnable onCancionCambia;
 
     // ── Música de fondo ──
@@ -121,6 +124,9 @@ public class SonidoManager {
     public void sonarLadronAparece()    { reproducirEfecto(ARCHIVO_LADRON_LLEGA); }
     public void sonarLadronRoba()       { reproducirEfecto(ARCHIVO_LADRON_ROBA); }
     public void sonarLadronAtrapado()   { reproducirEfecto(ARCHIVO_LADRON_ATRAPADO); }
+    public void sonarMejoraArbol()      { reproducirEfecto(ARCHIVO_MEJORA_ARBOL); }
+    public void sonarBancoComprado()    { reproducirEfecto(ARCHIVO_BANCO_COMPRADO); }
+    public void sonarPrestige()         { reproducirEfecto(ARCHIVO_PRESTIGE); }
 
     // ── Getters para la UI ──
     public String getNombreCancionActual() {

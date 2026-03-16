@@ -68,6 +68,10 @@ public class SimulacionBanco {
             eco.mejorarVelocidadGratis();
             eco.mejorarFlujoGratis();
         }
+        // Reputacion: empezar con VIP nivel 1
+        if (p.tieneReputacion()) {
+            eco.mejorarVipGratis();
+        }
     }
 
     private void inicializarCajeros(int n) {
@@ -434,6 +438,7 @@ public class SimulacionBanco {
         hoyAtendidos.incrementAndGet();
         long monedas = Math.round(eco.getMonedasPorCliente(cl.isVip()) * 0.5);
         eco.agregarMonedas(monedas);
+        if (gui != null) SonidoManager.get().sonarClienteAtendido();
         if (paseBatalla != null)
             paseBatalla.agregarXP(cl.isVip() ? PaseBatalla.XP_CLIENTE_VIP : PaseBatalla.XP_CLIENTE_NORMAL);
         if (gui != null) {

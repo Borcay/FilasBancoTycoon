@@ -161,6 +161,10 @@ public class InterfazGrafica extends JFrame {
     private volatile long    notifInicioMs       = 0;
     // Bug12: botón de prestige manual visible tras alcanzar meta
     private volatile boolean mostrarBtnPrestige  = false;
+    // Animación de prestige
+    private volatile boolean animandoPrestige = false;
+    private volatile float   alphaPrestige    = 0f;
+    private volatile int     prestigeFrame    = 0; // 0=subiendo 1=bajando
 
     public InterfazGrafica(SimulacionBanco sim, Economia eco) {
         this.sim    = sim;
@@ -178,17 +182,22 @@ public class InterfazGrafica extends JFrame {
             .addKeyEventDispatcher(e -> {
                 if (e.getID() != java.awt.event.KeyEvent.KEY_PRESSED) return false;
                 char c = e.getKeyChar();
-                // P = prestigiar si está disponible en el banco actual
+                // B = toggle árbol de habilidades
+                if (c == 'b' || c == 'B') {
+                    PrestigioManager pr = sim.getPrestigio();
+                    if (pr != null) { toggleArbol(); return true; }
+                    return false;
+                }
+                // P = prestigiar
                 if (c == 'p' || c == 'P') {
                     if (sim.isMetaAlcanzada() && !sim.isTerminado()) {
-                        // Prestigiar directamente sin menú
                         PrestigioManager pr = sim.getPrestigio();
                         if (pr != null) {
                             pr.agregarBilletes(pr.billetesDelPrestige());
                             pr.incrementarPrestigios();
                             activarUIPrestigio();
                             if (onRefrescarCubos != null) onRefrescarCubos.run();
-                            if (onPrestigioConBanco != null) onPrestigioConBanco.accept(sim);
+                            triggerPrestigio(sim);
                         }
                         return true;
                     }
@@ -223,7 +232,7 @@ public class InterfazGrafica extends JFrame {
         setLayout(new BorderLayout());
         add(crearHeader(),        BorderLayout.NORTH);
 
-        // Wrapper central: panel lateral (oculto inicialmente) + contenido del banco
+        // Wrapper central: panel lateral + banco
         JPanel wrapper = new JPanel(new BorderLayout());
         panelLateralBancos = crearPanelLateral();
         panelLateralBancos.setVisible(false);
@@ -665,6 +674,7 @@ public class InterfazGrafica extends JFrame {
                 g2.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
                 if (mostrandoNotifNivel && notifAlpha > 0) dibujarNotifNivel(g2, getWidth(), getHeight());
                 if (mostrarBtnPrestige) dibujarBotonPrestige(g2, getWidth(), getHeight());
+                if (animandoPrestige)   dibujarAnimPrestige(g2, getWidth(), getHeight());
             }
         };
         glass.setOpaque(false);
@@ -705,7 +715,18 @@ public class InterfazGrafica extends JFrame {
                     int bx = glass.getWidth() - bw - 16;
                     int by = glass.getHeight() - bh - 16;
                     if (x >= bx && x <= bx+bw && y >= by && y <= by+bh) {
-                        sim.prestigiarAhora(); return;
+                        // Mismo comportamiento que tecla P
+                        if (sim.isMetaAlcanzada() && !sim.isTerminado()) {
+                            PrestigioManager pr = sim.getPrestigio();
+                            if (pr != null) {
+                                pr.agregarBilletes(pr.billetesDelPrestige());
+                                pr.incrementarPrestigios();
+                                activarUIPrestigio();
+                                if (onRefrescarCubos != null) onRefrescarCubos.run();
+                                triggerPrestigio(sim);
+                            }
+                        }
+                        return;
                     }
                 }
                 if (mostrandoNotifNivel && notifAlpha > 0.1f) {
@@ -1027,7 +1048,9 @@ public class InterfazGrafica extends JFrame {
         lEfecto.setFont(new Font("Segoe UI", Font.ITALIC, 9));
         lEfecto.setForeground(new Color(60, 130, 80));
         lEfecto.setAlignmentX(Component.LEFT_ALIGNMENT);
-        lEfecto.setVisible(false);
+        // Respetar el estado de hover actual al recrear la tarjeta
+        boolean[] hov = (boolean[]) card.getClientProperty("hovering");
+        lEfecto.setVisible(hov != null && hov[0]);
         card.putClientProperty("lblEfecto", lEfecto);
         card.add(lEfecto);
 
@@ -1230,6 +1253,7 @@ public class InterfazGrafica extends JFrame {
             actualizarNotifNivel();
             // Bug12: mostrar botón de prestige cuando se alcanza la meta
             mostrarBtnPrestige = sim.isMetaAlcanzada() && !sim.isTerminado();
+            if (animandoPrestige) actualizarAnimPrestige();
             if (panelesMejora != null)
                 for (int i = 0; i < 5; i++) refrescarColorTarjeta(panelesMejora[i], i);
             panelBanco.repaint();
@@ -1810,18 +1834,22 @@ public class InterfazGrafica extends JFrame {
     public void ofrecerPrestigio(SimulacionBanco simQuePrestigia) {
         SwingUtilities.invokeLater(() -> {
             PrestigioManager pr = simQuePrestigia.getPrestigio();
+            if (pr != null && pr.getPrestigios() > 0) {
+                // Ya ha prestigiado antes — solo mostrar indicador P, esperar acción del usuario
+                mostrarToast("Banco listo para Prestige. Pulsa P o el boton P.", new Color(180, 120, 255));
+                return;
+            }
+            // Primera vez — mostrar menú explicativo
             VentanaPrestigio vp = new VentanaPrestigio(this, pr, simQuePrestigia.getClientesAtendidosTotal());
             vp.setVisible(true);
-
             if (vp.getResultado() == VentanaPrestigio.Resultado.PRESTIGE) {
                 pr.agregarBilletes(pr.billetesDelPrestige());
                 pr.incrementarPrestigios();
                 activarUIPrestigio();
                 if (onRefrescarCubos != null) onRefrescarCubos.run();
-                // Bug17: notificar a Main qué banco debe reiniciarse
-                if (onPrestigioConBanco != null) onPrestigioConBanco.accept(simQuePrestigia);
+                triggerPrestigio(simQuePrestigia);
             } else {
-                mostrarToast("Continuas jugando sin limite. Usa el boton de prestige cuando quieras.", new Color(60,120,220));
+                mostrarToast("Continuas jugando sin limite. Usa P o el boton para prestigiar.", new Color(60,120,220));
                 if (!animTimer.isRunning()) animTimer.start();
             }
         });
@@ -1833,6 +1861,23 @@ public class InterfazGrafica extends JFrame {
     public interface SimConsumer { void accept(SimulacionBanco s); }
     private SimConsumer onPrestigioConBanco;
     public void setOnPrestigioConBanco(SimConsumer c) { onPrestigioConBanco = c; }
+
+    /** Ejecuta el prestige: sonido + animación + callback */
+    private void triggerPrestigio(SimulacionBanco simQuePrestigia) {
+        SonidoManager.get().sonarPrestige();
+        // Mostrar animación primero
+        animandoPrestige = true;
+        alphaPrestige    = 0f;
+        prestigeFrame    = 0;
+        // Llamar el callback a mitad de la animación (1.5s) para que se vea
+        new javax.swing.Timer(1500, ev -> {
+            ((javax.swing.Timer)ev.getSource()).stop();
+            if (onPrestigioConBanco != null) onPrestigioConBanco.accept(simQuePrestigia);
+            // La animación seguirá en la nueva instancia si se quiere,
+            // pero al menos se vio 1.5s antes del switch
+            animandoPrestige = false;
+        }) {{ setRepeats(false); start(); }};
+    }
 
     private Runnable onRefrescarCubos;
     public void setOnRefrescarCubos(Runnable r) { onRefrescarCubos = r; }
@@ -1856,13 +1901,102 @@ public class InterfazGrafica extends JFrame {
         }
     }
 
-    /** Reinicia la simulación del banco actual para el nuevo prestige */
+    private VentanaArbolHabilidades arbolInstance;
+    private JPanel overlayArbol = null; // overlay de pantalla completa
+    private boolean arbolVisible = false;
+
     private void abrirArbolHabilidades() {
         PrestigioManager pr = sim.getPrestigio();
         if (pr == null) return;
-        VentanaArbolHabilidades v = new VentanaArbolHabilidades(this, pr,
-            () -> SwingUtilities.invokeLater(this::actualizarPanelInferior));
-        v.setVisible(true);
+        toggleArbol();
+    }
+
+    private void toggleArbol() {
+        PrestigioManager pr = sim.getPrestigio();
+        if (pr == null) return;
+
+        if (arbolVisible) {
+            // Cerrar overlay
+            if (overlayArbol != null) {
+                getLayeredPane().remove(overlayArbol);
+                getLayeredPane().repaint();
+            }
+            arbolVisible = false;
+            // Re-activar glass pane
+            if (getGlassPane() != null) getGlassPane().setVisible(true);
+            return;
+        }
+
+        // Abrir: construir overlay que cubre toda la ventana
+        final JLabel[] lblBillRef = { null }; // forward reference for callback
+
+        arbolInstance = new VentanaArbolHabilidades(this, pr, () -> {
+            SwingUtilities.invokeLater(() -> {
+                actualizarPanelInferior();
+                if (lblBillRef[0] != null)
+                    lblBillRef[0].setText("Billetes: " + pr.getBilletes() + " B");
+            });
+        });
+
+        overlayArbol = new JPanel(new BorderLayout()) {
+            @Override protected void paintComponent(Graphics g) {
+                g.setColor(new Color(8, 12, 30));
+                g.fillRect(0, 0, getWidth(), getHeight());
+            }
+        };
+        overlayArbol.setOpaque(false);
+
+        // Header del overlay
+        JPanel headerArbol = new JPanel(new BorderLayout());
+        headerArbol.setBackground(new Color(16, 22, 52));
+        headerArbol.setBorder(new javax.swing.border.EmptyBorder(10, 16, 10, 16));
+
+        JLabel titulo = new JLabel("Arbol de Habilidades");
+        titulo.setFont(new Font("Segoe UI", Font.BOLD, 18));
+        titulo.setForeground(new Color(255, 210, 50));
+        headerArbol.add(titulo, BorderLayout.WEST);
+
+        JPanel derHeader = new JPanel(new java.awt.FlowLayout(java.awt.FlowLayout.RIGHT, 12, 0));
+        derHeader.setOpaque(false);
+        JLabel lblBill = new JLabel("Billetes: " + pr.getBilletes() + " B");
+        lblBill.setFont(new Font("Segoe UI", Font.BOLD, 13));
+        lblBill.setForeground(new Color(180, 120, 255));
+        lblBillRef[0] = lblBill; // conectar para actualización
+        JButton btnCerrar = new JButton("Cerrar  [B]");
+        btnCerrar.setFont(new Font("Segoe UI", Font.BOLD, 11));
+        btnCerrar.setForeground(Color.WHITE);
+        btnCerrar.setBackground(new Color(50, 60, 120));
+        btnCerrar.setBorderPainted(false);
+        btnCerrar.setFocusPainted(false);
+        btnCerrar.setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
+        btnCerrar.addActionListener(e -> toggleArbol());
+        derHeader.add(lblBill);
+        derHeader.add(btnCerrar);
+        headerArbol.add(derHeader, BorderLayout.EAST);
+        overlayArbol.add(headerArbol, BorderLayout.NORTH);
+
+        // Árbol
+        overlayArbol.add(arbolInstance.getArbolPanel(), BorderLayout.CENTER);
+
+        // Posicionar sobre toda la ventana via LayeredPane
+        Dimension size = getLayeredPane().getSize();
+        overlayArbol.setBounds(0, 0, size.width, size.height);
+        getLayeredPane().add(overlayArbol, JLayeredPane.MODAL_LAYER);
+
+        // Reposicionar si la ventana cambia de tamaño
+        addComponentListener(new java.awt.event.ComponentAdapter() {
+            @Override public void componentResized(java.awt.event.ComponentEvent e) {
+                if (overlayArbol != null && arbolVisible) {
+                    overlayArbol.setBounds(0, 0,
+                        getLayeredPane().getWidth(), getLayeredPane().getHeight());
+                }
+            }
+        });
+
+        arbolVisible = true;
+        // Desactivar glass pane para que los clicks lleguen al overlay del árbol
+        if (getGlassPane() != null) getGlassPane().setVisible(false);
+        getLayeredPane().repaint();
     }
 
     private void abrirVentanaBancos() {
@@ -1938,6 +2072,42 @@ public class InterfazGrafica extends JFrame {
         g2.setFont(new Font("Segoe UI", Font.BOLD, 11));
         g2.setColor(Color.WHITE);
         g2.drawString("Ver ->", nx+nw-56, ny+nh-16);
+        g2.setComposite(AlphaComposite.SrcOver);
+    }
+
+    private void actualizarAnimPrestige() {
+        if (prestigeFrame == 0) {
+            alphaPrestige = Math.min(1f, alphaPrestige + 0.06f);
+            if (alphaPrestige >= 1f) prestigeFrame = 1;
+        } else {
+            alphaPrestige = Math.max(0f, alphaPrestige - 0.025f);
+        }
+    }
+
+    /** Dibuja la animación de prestige sobre el glass pane */
+    private void dibujarAnimPrestige(Graphics2D g2, int W, int H) {
+        if (!animandoPrestige || alphaPrestige <= 0) return;
+        float a = alphaPrestige;
+
+        // Flash blanco-morado que cubre toda la pantalla
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, a * 0.45f));
+        g2.setColor(new Color(120, 60, 220));
+        g2.fillRect(0, 0, W, H);
+
+        // Texto central
+        g2.setComposite(AlphaComposite.getInstance(AlphaComposite.SRC_OVER, Math.min(1f, a * 1.5f)));
+        g2.setFont(new Font("Segoe UI", Font.BOLD, 42));
+        g2.setColor(new Color(255, 230, 80));
+        FontMetrics fm = g2.getFontMetrics();
+        String txt = "PRESTIGE!";
+        g2.drawString(txt, (W - fm.stringWidth(txt)) / 2, H / 2 - 10);
+
+        g2.setFont(new Font("Segoe UI", Font.PLAIN, 18));
+        fm = g2.getFontMetrics();
+        String sub = "+1 Billete";
+        g2.setColor(new Color(220, 200, 255));
+        g2.drawString(sub, (W - fm.stringWidth(sub)) / 2, H / 2 + 30);
+
         g2.setComposite(AlphaComposite.SrcOver);
     }
 
