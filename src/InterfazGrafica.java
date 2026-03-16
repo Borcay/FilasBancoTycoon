@@ -182,6 +182,19 @@ public class InterfazGrafica extends JFrame {
             .addKeyEventDispatcher(e -> {
                 if (e.getID() != java.awt.event.KeyEvent.KEY_PRESSED) return false;
                 char c = e.getKeyChar();
+                // D = activar modo debug (solo una vez)
+                if (c == 'd' || c == 'D') {
+                    PrestigioManager pr = sim.getPrestigio();
+                    if (pr != null) {
+                        pr.agregarBilletes(10);
+                        pr.incrementarPrestigios();
+                        eco.agregarMonedas(5000);
+                        activarUIPrestigio();
+                        if (onRefrescarCubos != null) onRefrescarCubos.run();
+                        mostrarToast("Modo DEBUG: +10B +$5000 +1 Prestige", new Color(255, 80, 80));
+                    }
+                    return true;
+                }
                 // B = toggle árbol de habilidades
                 if (c == 'b' || c == 'B') {
                     PrestigioManager pr = sim.getPrestigio();

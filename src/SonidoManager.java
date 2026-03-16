@@ -1,6 +1,7 @@
 import javax.sound.sampled.*;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStream;
 import java.util.*;
 
 public class SonidoManager {
@@ -49,9 +50,8 @@ public class SonidoManager {
 
         String archivo = playlist.get(indiceActual);
         try {
-            File f = new File(archivo);
-            if (!f.exists()) { System.out.println("[SONIDO] No encontrado: " + archivo); siguienteCancion(); return; }
-            AudioInputStream stream = AudioSystem.getAudioInputStream(f);
+            AudioInputStream stream = abrirAudio(archivo);
+            if (stream == null) { System.out.println("[SONIDO] No encontrado: " + archivo); siguienteCancion(); return; }
             clipMusica = AudioSystem.getClip();
             clipMusica.open(stream);
             aplicarVolumen();
@@ -69,6 +69,37 @@ public class SonidoManager {
             System.out.println("[SONIDO] Error: " + e.getMessage());
             siguienteCancion();
         }
+    }
+
+    /**
+     * Abre un audio buscando primero dentro del JAR (recursos),
+     * y si no lo encuentra, como archivo externo relativo al JAR.
+     */
+    private AudioInputStream abrirAudio(String nombre) throws UnsupportedAudioFileException, IOException {
+        // 1. Raíz del JAR (NetBeans pone los recursos aquí por defecto)
+        InputStream is = SonidoManager.class.getResourceAsStream("/" + nombre);
+        // 2. Subcarpeta /audio/
+        if (is == null) is = SonidoManager.class.getResourceAsStream("/audio/" + nombre);
+        // 3. Sin barra
+        if (is == null) is = SonidoManager.class.getResourceAsStream(nombre);
+
+        if (is != null)
+            return AudioSystem.getAudioInputStream(new java.io.BufferedInputStream(is));
+
+        // 4. Junto al JAR en disco
+        try {
+            java.io.File jar = new java.io.File(
+                SonidoManager.class.getProtectionDomain().getCodeSource().getLocation().toURI());
+            java.io.File dir = jar.isFile() ? jar.getParentFile() : jar;
+            java.io.File f = new java.io.File(dir, nombre);
+            if (f.exists()) return AudioSystem.getAudioInputStream(f);
+        } catch (Exception ignored) {}
+
+        // 5. Directorio de trabajo actual
+        java.io.File f = new java.io.File(nombre);
+        if (f.exists()) return AudioSystem.getAudioInputStream(f);
+
+        return null;
     }
 
     public void siguienteCancion() {
@@ -108,15 +139,23 @@ public class SonidoManager {
     private void reproducirEfecto(String archivo) {
         new Thread(() -> {
             try {
-                File f = new File(archivo);
-                if (!f.exists()) return;
-                AudioInputStream stream = AudioSystem.getAudioInputStream(f);
+                AudioInputStream stream = abrirAudio(archivo);
+                if (stream == null) return;
                 Clip clip = AudioSystem.getClip();
                 clip.open(stream);
+                aplicarVolumenAClip(clip);
                 clip.start();
                 clip.addLineListener(ev -> { if (ev.getType() == LineEvent.Type.STOP) clip.close(); });
             } catch (Exception e) { System.out.println("[SONIDO] Efecto error: " + e.getMessage()); }
         }).start();
+    }
+
+    private void aplicarVolumenAClip(Clip clip) {
+        try {
+            FloatControl ctrl = (FloatControl) clip.getControl(FloatControl.Type.MASTER_GAIN);
+            float dB = (volumen <= 0f) ? ctrl.getMinimum() : 20f * (float) Math.log10(volumen);
+            ctrl.setValue(Math.max(ctrl.getMinimum(), Math.min(ctrl.getMaximum(), dB)));
+        } catch (IllegalArgumentException ignored) {}
     }
 
     public void sonarClienteAtendido()  { reproducirEfecto(ARCHIVO_ATENDIDO); }

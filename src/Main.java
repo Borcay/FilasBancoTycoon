@@ -8,7 +8,7 @@ public class Main {
     // ── MODO DEBUG ────────────────────────────────────────────────────────
     // Cambia a true para arrancar con billetes y prestige ya activo.
     // Cambia a false antes de entregar/publicar el juego.
-    private static final boolean DEBUG = true;
+    private static final boolean DEBUG = false;
     // ─────────────────────────────────────────────────────────────────────
 
     private static final List<SimulacionBanco> todasSims = new ArrayList<>();
